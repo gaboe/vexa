@@ -152,6 +152,27 @@ class Transcription(Base):
     )
 
 
+class PostMeetingJob(Base):
+    __tablename__ = "post_meeting_jobs"
+
+    id = Column(Integer, primary_key=True)
+    kind = Column(String(64), nullable=False)
+    meeting_id = Column(Integer, ForeignKey("meetings.id"), nullable=False)
+    recording_id = Column(String(255), nullable=False)
+    recording_version = Column(Integer, nullable=False)
+    status = Column(String(32), nullable=False, server_default="pending")
+    attempts = Column(Integer, nullable=False, server_default="0")
+    lease_owner = Column(String(255), nullable=True)
+    lease_expires_at = Column(DateTime(timezone=True), nullable=True)
+    created_at = Column(DateTime(timezone=True), nullable=False, server_default=func.now())
+    updated_at = Column(DateTime(timezone=True), nullable=False, server_default=func.now(), onupdate=func.now())
+
+    __table_args__ = (
+        UniqueConstraint("kind", "meeting_id", "recording_id", "recording_version", name="uq_post_meeting_job_identity"),
+        Index("ix_post_meeting_jobs_claim", "status", "lease_expires_at"),
+    )
+
+
 class MeetingSession(Base):
     __tablename__ = "meeting_sessions"
 
