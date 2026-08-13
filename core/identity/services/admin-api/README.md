@@ -9,12 +9,13 @@ service stays out of the identity business. Python because it carves the parent 
 ## Seams
 
 | Direction | Neighbour | Via | What crosses |
-|---|---|---|---|
+| --- | --- | --- | --- |
 | **calls** | terminal / dashboard login | `GET /admin/users/email/{email}` | resolve a returning user by email (find-or-create) |
 | **calls** | terminal / dashboard login | `POST /admin/users` · `POST /admin/users/{id}/tokens` | create user · mint a scoped session token |
 | **consumes** | the gateway | `POST /internal/validate` | a raw token → `{user_id, scopes, max_concurrent, email, webhook_*}` (fail-closed) |
 | **calls** | bot/worker clients | `X-API-Key` on `/user/*` | user-tier self-serve (webhook config in `user.data`) |
-| **produces** | Postgres (backing stack) | SQLAlchemy `users` · `api_tokens` | the identity tables (one `Base`, FK `api_tokens.user_id → users.id`) |
+| **consumes** | post-meeting worker | `POST /internal/post-meeting-jobs/{claim,renew,complete,fail}` | worker key + opaque lease token; capability-disabled until `POST_MEETING_JOBS_WORKER_TOKEN` is set |
+| **produces** | Postgres (backing stack) | SQLAlchemy `users` · `api_tokens` · `post_meeting_jobs` | identity plus durable post-meeting job leases |
 
 ## Contracts
 
@@ -42,5 +43,6 @@ uv run pytest -q     # L3 integration (testcontainers Postgres) · L1 health
 - ✅ delivered — `/internal/validate` authz oracle → `{user_id, scopes, max_concurrent, email, webhook_*}`, fail-closed, expiry-rejecting, `last_used_at` bump
 - ✅ delivered — scoped/multi-scope/expiring token mint (`vxa_<scope>_…`, `VALID_SCOPES`)
 - 🟡 partial — user tier: `PUT /user/webhook` self-serve (other `/user/*` surfaces deferred)
+- ✅ delivered — durable post-meeting job repository and worker-only claim/renew/complete/fail lease API; no lifecycle enqueue or worker runtime is wired
 - ⬜ planned — `/internal/validate` also returns the canonical `subject` (`u_<user_id>`)
 - ⬜ planned — the find-or-create-user + mint-token flow backs the terminal login (Google + dev type-any-email)

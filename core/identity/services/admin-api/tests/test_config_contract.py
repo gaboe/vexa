@@ -30,6 +30,11 @@ def test_preflight_passes_when_required_set():
     cp.preflight({"INTERNAL_API_SECRET": "a-real-secret"})
 
 
+def test_post_meeting_worker_capability_is_disabled_by_default():
+    assert cp.capability_states({})["post_meeting_jobs"] == cp.NOT_CONFIGURED
+    assert cp.capability_states({"POST_MEETING_JOBS_WORKER_TOKEN": "configured"})["post_meeting_jobs"] == cp.CONFIGURED
+
+
 def test_db_pool_keys_declared_defaulted():
     # #635: DB_POOL_SIZE / DB_MAX_OVERFLOW are read in __main__ (an env read scanned by
     # gate:config-contract), so they must be declared — class defaulted, defaults 5/10 matching

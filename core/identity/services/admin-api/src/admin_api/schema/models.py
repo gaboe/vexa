@@ -163,6 +163,7 @@ class PostMeetingJob(Base):
     status = Column(String(32), nullable=False, server_default="pending")
     attempts = Column(Integer, nullable=False, server_default="0")
     lease_owner = Column(String(255), nullable=True)
+    lease_token_hash = Column(String(64), nullable=True)
     lease_expires_at = Column(DateTime(timezone=True), nullable=True)
     created_at = Column(DateTime(timezone=True), nullable=False, server_default=func.now())
     updated_at = Column(DateTime(timezone=True), nullable=False, server_default=func.now(), onupdate=func.now())

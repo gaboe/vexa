@@ -28,12 +28,15 @@ from pydantic import BaseModel, Field, field_serializer, model_validator
 from sqlalchemy.future import select
 from sqlalchemy.ext.asyncio import AsyncSession
 
-from ..schema.models import APIToken, PlatformSetting, User
+from ..config_preflight import CONFIGURED, capability_state
+from ..post_meeting_jobs import PostMeetingJobRepository, StaleLeaseError
+from ..schema.models import APIToken, PlatformSetting, PostMeetingJob, User
 from ..token_scope import VALID_SCOPES, generate_prefixed_token
 from .db import get_db
 
 ADMIN_KEY_HEADER = APIKeyHeader(name="X-Admin-API-Key", auto_error=False)
 USER_KEY_HEADER = APIKeyHeader(name="X-API-Key", auto_error=False)
+POST_MEETING_WORKER_KEY_HEADER = APIKeyHeader(name="X-Post-Meeting-Worker-Key", auto_error=False)
 
 
 def _admin_token() -> Optional[str]:
@@ -46,6 +49,15 @@ def _internal_secret() -> str:
 
 def _dev_mode() -> bool:
     return os.getenv("DEV_MODE", "false").lower() == "true"
+
+
+def _check_post_meeting_worker(worker_key: str | None) -> None:
+    if capability_state("post_meeting_jobs") != CONFIGURED:
+        raise HTTPException(status.HTTP_503_SERVICE_UNAVAILABLE,
+                            detail="post-meeting jobs worker capability is not configured")
+    expected = os.getenv("POST_MEETING_JOBS_WORKER_TOKEN", "")
+    if not worker_key or not hmac.compare_digest(worker_key, expected):
+        raise HTTPException(status.HTTP_403_FORBIDDEN, detail="Invalid post-meeting worker key")
 
 
 async def verify_admin_token(admin_api_key: str = Security(ADMIN_KEY_HEADER)):
@@ -173,6 +185,21 @@ class TokenCreate(BaseModel):
     expires_in: Optional[int] = Field(default=None, gt=0)
 
     model_config = {"extra": "forbid"}
+
+
+class PostMeetingClaimRequest(BaseModel):
+    kind: str = Field(min_length=1, max_length=64)
+    lease_seconds: int = Field(default=300, ge=1, le=3600)
+
+
+class PostMeetingLeaseRequest(BaseModel):
+    lease_token: str = Field(min_length=1, max_length=255)
+    lease_seconds: int = Field(default=300, ge=1, le=3600)
+
+
+class PostMeetingFailRequest(BaseModel):
+    lease_token: str = Field(min_length=1, max_length=255)
+    retryable: bool
 
 
 class TokenInfo(BaseModel):
@@ -867,6 +894,80 @@ def create_app() -> FastAPI:
             await _platform_setting("models", db),
             _MODELS_FIELDS,
         )}
+
+    def _post_meeting_job_response(job: PostMeetingJob) -> dict:
+        return {
+            "id": job.id,
+            "kind": job.kind,
+            "meeting_id": job.meeting_id,
+            "recording_id": job.recording_id,
+            "recording_version": job.recording_version,
+            "status": job.status,
+            "attempts": job.attempts,
+            "lease_expires_at": job.lease_expires_at,
+        }
+
+    @app.post("/internal/post-meeting-jobs/claim", include_in_schema=False)
+    async def claim_post_meeting_job(
+        payload: PostMeetingClaimRequest,
+        worker_key: str = Security(POST_MEETING_WORKER_KEY_HEADER),
+        db: AsyncSession = Depends(get_db),
+    ):
+        _check_post_meeting_worker(worker_key)
+        claimed = await PostMeetingJobRepository().claim(
+            db, kind=payload.kind, lease_seconds=payload.lease_seconds
+        )
+        if claimed is None:
+            return Response(status_code=status.HTTP_204_NO_CONTENT)
+        return {"job": _post_meeting_job_response(claimed.job), "lease_token": claimed.lease_token}
+
+    @app.post("/internal/post-meeting-jobs/{job_id}/renew", include_in_schema=False)
+    async def renew_post_meeting_job(
+        job_id: int,
+        payload: PostMeetingLeaseRequest,
+        worker_key: str = Security(POST_MEETING_WORKER_KEY_HEADER),
+        db: AsyncSession = Depends(get_db),
+    ):
+        _check_post_meeting_worker(worker_key)
+        try:
+            job = await PostMeetingJobRepository().renew(
+                db, job_id=job_id, lease_token=payload.lease_token, lease_seconds=payload.lease_seconds
+            )
+        except StaleLeaseError:
+            raise HTTPException(status.HTTP_409_CONFLICT, detail="Stale or expired job lease")
+        return {"job": _post_meeting_job_response(job)}
+
+    @app.post("/internal/post-meeting-jobs/{job_id}/complete", include_in_schema=False)
+    async def complete_post_meeting_job(
+        job_id: int,
+        payload: PostMeetingLeaseRequest,
+        worker_key: str = Security(POST_MEETING_WORKER_KEY_HEADER),
+        db: AsyncSession = Depends(get_db),
+    ):
+        _check_post_meeting_worker(worker_key)
+        try:
+            job, idempotent = await PostMeetingJobRepository().complete(
+                db, job_id=job_id, lease_token=payload.lease_token
+            )
+        except StaleLeaseError:
+            raise HTTPException(status.HTTP_409_CONFLICT, detail="Stale or expired job lease")
+        return {"job": _post_meeting_job_response(job), "idempotent": idempotent}
+
+    @app.post("/internal/post-meeting-jobs/{job_id}/fail", include_in_schema=False)
+    async def fail_post_meeting_job(
+        job_id: int,
+        payload: PostMeetingFailRequest,
+        worker_key: str = Security(POST_MEETING_WORKER_KEY_HEADER),
+        db: AsyncSession = Depends(get_db),
+    ):
+        _check_post_meeting_worker(worker_key)
+        try:
+            job = await PostMeetingJobRepository().fail(
+                db, job_id=job_id, lease_token=payload.lease_token, retryable=payload.retryable
+            )
+        except StaleLeaseError:
+            raise HTTPException(status.HTTP_409_CONFLICT, detail="Stale or expired job lease")
+        return {"job": _post_meeting_job_response(job)}
 
     @app.get("/")
     async def root():
