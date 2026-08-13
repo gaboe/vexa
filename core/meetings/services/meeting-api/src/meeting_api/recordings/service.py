@@ -16,7 +16,7 @@ golden-locked — this module only orchestrates the IO + the JSONB bookkeeping a
 from __future__ import annotations
 
 from datetime import datetime, timezone
-from typing import Any, Optional
+from typing import Any, Awaitable, Callable, Optional
 
 from ..obs import log_event
 from ..recording_codec import build_recording_master
@@ -133,6 +133,7 @@ async def finalize_master(
     meeting_id: int,
     recording_id: int,
     media_type: str = "audio",
+    on_audio_finalized: Optional[Callable[[int, int], Awaitable[None]]] = None,
 ) -> Optional[str]:
     """Build + upload the master for a recording media-file and stamp the JSONB. Returns the master
     storage key, or ``None`` when there is nothing to finalize.
@@ -219,7 +220,10 @@ async def finalize_master(
         others = [x for x in recs if x.get("id") != recording_id]
         return others + [r], master_key
 
-    return await repo.mutate_recordings(meeting_id, _stamp)
+    master_key = await repo.mutate_recordings(meeting_id, _stamp)
+    if master_key is not None and media_type == "audio" and on_audio_finalized is not None:
+        await on_audio_finalized(meeting_id, recording_id)
+    return master_key
 
 
 def _verify_meeting_token(token: str, *, secret: Optional[str] = None) -> dict[str, Any]:

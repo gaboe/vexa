@@ -113,6 +113,7 @@ def build_router(
     *,
     token_secret: Optional[str] = None,
     transcript_store: Optional[TranscriptStore] = None,
+    on_audio_finalized=None,
 ) -> APIRouter:
     """The recordings routes over the injected ``RecordingRepo`` + ``Storage`` ports."""
     router = APIRouter()
@@ -156,7 +157,8 @@ def build_router(
         if not preflight["eligible"]:
             raise HTTPException(status_code=409, detail=preflight["reason"])
         master_key = await finalize_master(
-            repo, storage, meeting_id=recording["meeting_id"], recording_id=recording_id, media_type="audio"
+            repo, storage, meeting_id=recording["meeting_id"], recording_id=recording_id, media_type="audio",
+            on_audio_finalized=on_audio_finalized,
         )
         if master_key is None:
             raise HTTPException(status_code=409, detail="Recording master is unavailable")
@@ -302,7 +304,8 @@ def build_router(
             raise HTTPException(status_code=404, detail="Recording not found")
         mf = next((m for m in rec.get("media_files", []) if m.get("type") == type), None)
         master_key = await finalize_master(
-            repo, storage, meeting_id=rec["meeting_id"], recording_id=recording_id, media_type=type
+            repo, storage, meeting_id=rec["meeting_id"], recording_id=recording_id, media_type=type,
+            on_audio_finalized=on_audio_finalized,
         )
         if master_key is None:
             raise HTTPException(status_code=404, detail="No such media file to finalize")
@@ -354,7 +357,7 @@ def build_router(
         # after a mid-meeting /master it never re-assembled, serving the stale partial forever.)
         await finalize_master(
             repo, storage, meeting_id=rec["meeting_id"], recording_id=recording_id,
-            media_type=mf.get("type", type),
+            media_type=mf.get("type", type), on_audio_finalized=on_audio_finalized,
         )
         recs = await repo.list_meeting_recordings(user_id)
         rec = next((r for r in recs if r.get("id") == recording_id), rec)

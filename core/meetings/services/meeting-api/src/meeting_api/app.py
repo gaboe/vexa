@@ -39,7 +39,7 @@ from . import recordings as _recordings
 from .collector.app import build_router as _build_collector_router
 from .collector.ports import RedisBus, TranscriptStore
 from .lifecycle.machine import LifecycleSink, MeetingStore
-from .obs import TraceMiddleware
+from .obs import TraceMiddleware, log_event
 
 #: In-process capture of the last N emitted webhook envelopes — an eval/introspection seam, never a
 #: durable store (the DB meeting row is the durable record; the WebhookSink is the delivery path).
@@ -179,6 +179,7 @@ def create_app(
     # meeting's remaining redis segments to Postgres + persist the processed doc into meeting.data,
     # so a finished meeting's transcript is durable IMMEDIATELY. Best-effort — never fails the callback.
     transcript_finalizer: Optional["object"] = None,
+    post_meeting_producer: Optional["object"] = None,
     # calendar-sync user edges (async callables from the composition root; None → routes 503)
     calendar_sync_now: Optional["object"] = None,
     calendar_sync_status: Optional["object"] = None,
@@ -232,6 +233,11 @@ def create_app(
     app.state.lifecycle_sink = sink
     app.state.lifecycle_store = sink.store
     app.state.webhook_sink = webhook_sink
+    if post_meeting_producer is None:
+        from .post_meeting.producer import LocalDiarizationProducer
+
+        post_meeting_producer = LocalDiarizationProducer()
+    app.state.post_meeting_producer = post_meeting_producer
     # #841: the per-user delivery ledger the read endpoint serves. Default to the in-memory fake so
     # the app-factory / conformance path stands up without redis (same pattern as the other ports).
     if delivery_ledger is None:
@@ -250,6 +256,7 @@ def create_app(
         redis,
         transcript_finalizer,
         delivery_ledger,
+        post_meeting_producer,
     )
 
     # --- bot_spawn: POST /bots (invocation.v1 + runtime.v1) ---
@@ -285,9 +292,28 @@ def create_app(
         recording_repo = _recordings_fakes().InMemoryRecordingRepo()
     if storage is None:
         storage = _recordings_fakes().InMemoryStorage()
+
+    async def _on_audio_finalized(meeting_id: int, recording_id: int) -> None:
+        # Post-meeting enqueue is nonfatal: a finalized master must not 500 because admin is down.
+        try:
+            if await recording_repo.meeting_status(meeting_id) != "completed":
+                return
+            await post_meeting_producer.enqueue_completed_recordings({
+                "id": meeting_id,
+                "status": "completed",
+                "data": {"recordings": await recording_repo.get_recordings(meeting_id)},
+            })
+        except Exception as e:  # noqa: BLE001
+            log_event(
+                "local_diarization_enqueue_failed", audience="operator", level="warning",
+                span="post_meeting.enqueue", meeting_id=str(meeting_id),
+                fields={"error_type": type(e).__name__},
+            )
+
     app.include_router(
         _recordings.build_router(
-            recording_repo, storage, token_secret=token_secret, transcript_store=transcript_store
+            recording_repo, storage, token_secret=token_secret, transcript_store=transcript_store,
+            on_audio_finalized=_on_audio_finalized,
         )
     )
 
@@ -348,6 +374,7 @@ def _mount_lifecycle(
     redis: "object" = None,
     transcript_finalizer: "object" = None,
     delivery_ledger: "object" = None,
+    post_meeting_producer: "object" = None,
 ) -> None:
     """Register the lifecycle.v1 callback route on the unified app (the lifecycle receiver's
     ``/bots/internal/callback/lifecycle`` handler, sharing the app's TraceMiddleware).
@@ -587,6 +614,20 @@ def _mount_lifecycle(
                 log_event("transcript_finalize_failed", audience="system", level="warning",
                           span="lifecycle.callback",
                           fields={"meeting_id": terminal_meeting_id, "error": str(e)})
+        if (
+            terminal_advanced
+            and rec.status.value == "completed"
+            and isinstance(meeting_row, dict)
+            and post_meeting_producer is not None
+        ):
+            try:
+                await post_meeting_producer.enqueue_completed_recordings(meeting_row)
+            except Exception as e:  # noqa: BLE001 — post-meeting enqueue is nonfatal
+                log_event(
+                    "local_diarization_enqueue_failed", audience="operator", level="warning",
+                    span="post_meeting.enqueue", meeting_id=str(meeting_row.get("id")),
+                    fields={"error_type": type(e).__name__},
+                )
         if terminal_advanced and isinstance(meeting_row, dict):
             data = dict(meeting_row.get("data") or {})
             provenance = build_service_provenance({**meeting_row, "data": data})
