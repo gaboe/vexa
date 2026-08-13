@@ -64,6 +64,18 @@ def test_custom_endpoint_falls_back_to_openai_dialect():
     assert out["ok"]
 
 
+def test_custom_endpoint_allows_local_cold_model_timeout():
+    calls = []
+    def post(url, payload, headers):
+        calls.append(url)
+        return (404, "") if url.endswith("/v1/messages") else (200, "{}")
+    out = ct.test_custom_endpoint("http://ollama:11434", "local-ollama", "qwen3:4b", post=post)
+    assert out["ok"] and calls == [
+        "http://ollama:11434/v1/messages",
+        "http://ollama:11434/v1/chat/completions",
+    ]
+
+
 def test_custom_endpoint_unreachable():
     def post(url, payload, headers):
         raise OSError("connection refused")

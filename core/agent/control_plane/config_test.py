@@ -31,7 +31,7 @@ CREDS_PATH = "/var/lib/vexa/host-claude-credentials"
 KEYCHAIN_REFRESH = ('security find-generic-password -s "Claude Code-credentials" -w '
                     "> ~/.claude/.credentials.json")
 
-_TIMEOUT = 8.0
+_TIMEOUT = 60.0
 # The audio round-trip probe transcribes a real ~1s clip — give the model time to answer.
 _STT_PROBE_TIMEOUT = 20.0
 
