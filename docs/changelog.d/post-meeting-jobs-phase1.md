@@ -1,1 +1,1 @@
-- **Durable post-meeting job leases.** Operators can enable admin-api's worker-only lease API for persisted post-meeting jobs; lifecycle enqueue and worker execution remain off by default.
+- **Durable post-meeting job leases.** Operators can enable admin-api's internal enqueue and worker lease APIs for persisted post-meeting jobs; lifecycle callers and worker execution remain off by default.

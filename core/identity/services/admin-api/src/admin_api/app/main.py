@@ -51,10 +51,14 @@ def _dev_mode() -> bool:
     return os.getenv("DEV_MODE", "false").lower() == "true"
 
 
-def _check_post_meeting_worker(worker_key: str | None) -> None:
+def _check_post_meeting_jobs_enabled() -> None:
     if capability_state("post_meeting_jobs") != CONFIGURED:
         raise HTTPException(status.HTTP_503_SERVICE_UNAVAILABLE,
                             detail="post-meeting jobs worker capability is not configured")
+
+
+def _check_post_meeting_worker(worker_key: str | None) -> None:
+    _check_post_meeting_jobs_enabled()
     expected = os.getenv("POST_MEETING_JOBS_WORKER_TOKEN", "")
     if not worker_key or not hmac.compare_digest(worker_key, expected):
         raise HTTPException(status.HTTP_403_FORBIDDEN, detail="Invalid post-meeting worker key")
@@ -183,6 +187,15 @@ class TokenCreate(BaseModel):
     scopes: Optional[List[str]] = None
     name: Optional[str] = None
     expires_in: Optional[int] = Field(default=None, gt=0)
+
+    model_config = {"extra": "forbid"}
+
+
+class PostMeetingEnqueueRequest(BaseModel):
+    kind: str = Field(min_length=1, max_length=64)
+    meeting_id: int = Field(ge=1)
+    recording_id: str = Field(min_length=1, max_length=255)
+    recording_version: int = Field(ge=1)
 
     model_config = {"extra": "forbid"}
 
@@ -906,6 +919,17 @@ def create_app() -> FastAPI:
             "attempts": job.attempts,
             "lease_expires_at": job.lease_expires_at,
         }
+
+    @app.post("/internal/post-meeting-jobs", include_in_schema=False)
+    async def enqueue_post_meeting_job(
+        payload: PostMeetingEnqueueRequest,
+        request: Request,
+        db: AsyncSession = Depends(get_db),
+    ):
+        _check_internal(request)
+        _check_post_meeting_jobs_enabled()
+        job = await PostMeetingJobRepository().insert_or_get(db, **payload.model_dump())
+        return {"job": _post_meeting_job_response(job)}
 
     @app.post("/internal/post-meeting-jobs/claim", include_in_schema=False)
     async def claim_post_meeting_job(

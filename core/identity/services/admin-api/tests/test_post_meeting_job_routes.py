@@ -4,7 +4,7 @@ from datetime import datetime, timedelta, timezone
 
 import pytest
 from fastapi.testclient import TestClient
-from sqlalchemy import create_engine, update
+from sqlalchemy import create_engine, func, select, update
 from sqlalchemy.ext.asyncio import async_sessionmaker
 from sqlalchemy.orm import Session
 
@@ -19,6 +19,8 @@ from conftest import requires_docker
 
 pytestmark = requires_docker
 
+INTERNAL_SECRET = "test-internal-secret"
+
 
 @pytest.fixture()
 def client(pg_url, pg_async_url, monkeypatch):
@@ -27,6 +29,7 @@ def client(pg_url, pg_async_url, monkeypatch):
     ensure_schema_sync(engine, Base)
     engine.dispose()
     monkeypatch.setenv("POST_MEETING_JOBS_WORKER_TOKEN", "test-worker-key")
+    monkeypatch.setenv("INTERNAL_API_SECRET", INTERNAL_SECRET)
     app_db.configure(pg_async_url)
     with TestClient(create_app()) as test_client:
         yield test_client
@@ -35,6 +38,29 @@ def client(pg_url, pg_async_url, monkeypatch):
 
 def _worker():
     return {"X-Post-Meeting-Worker-Key": "test-worker-key"}
+
+
+def _internal():
+    return {"X-Internal-Secret": INTERNAL_SECRET}
+
+
+def _seed_meeting(pg_url):
+    engine = create_engine(pg_url)
+    with Session(engine) as session:
+        meeting = Meeting(user_id=1, platform="test", status="completed")
+        session.add(meeting)
+        session.commit()
+        meeting_id = meeting.id
+    engine.dispose()
+    return meeting_id
+
+
+def _job_count(pg_url):
+    engine = create_engine(pg_url)
+    with Session(engine) as session:
+        count = session.scalar(select(func.count()).select_from(PostMeetingJob))
+    engine.dispose()
+    return count
 
 
 def _seed_job(pg_url, *, kind="diarization"):
@@ -105,6 +131,53 @@ def test_sql_repository_persists_identity_leases_and_terminal_idempotency(pg_url
         await app_db.get_engine().dispose()
 
     asyncio.run(exercise())
+
+
+def test_enqueue_requires_internal_secret_and_valid_identity(client, pg_url):
+    payload = {
+        "kind": "diarization",
+        "meeting_id": _seed_meeting(pg_url),
+        "recording_id": "recording-1",
+        "recording_version": 1,
+    }
+    assert client.post("/internal/post-meeting-jobs", json=payload).status_code == 403
+    assert client.post(
+        "/internal/post-meeting-jobs", headers={"X-Internal-Secret": "wrong"}, json=payload
+    ).status_code == 403
+    assert client.post(
+        "/internal/post-meeting-jobs", headers=_internal(), json={"kind": ""}
+    ).status_code == 422
+    assert _job_count(pg_url) == 0
+
+
+def test_enqueue_is_idempotent_and_redacts_worker_credentials(client, pg_url):
+    payload = {
+        "kind": "diarization",
+        "meeting_id": _seed_meeting(pg_url),
+        "recording_id": "recording-1",
+        "recording_version": 1,
+    }
+    first = client.post("/internal/post-meeting-jobs", headers=_internal(), json=payload)
+    second = client.post("/internal/post-meeting-jobs", headers=_internal(), json=payload)
+
+    assert first.status_code == second.status_code == 200
+    assert first.json() == second.json()
+    assert first.json()["job"].items() >= payload.items()
+    assert set(first.json()) == {"job"}
+    assert not ({"lease_token", "lease_token_hash", "lease_owner", "worker_key"} & first.json()["job"].keys())
+    assert _job_count(pg_url) == 1
+
+
+def test_enqueue_stays_disabled_without_worker_credential_and_creates_no_job(client, pg_url, monkeypatch):
+    monkeypatch.delenv("POST_MEETING_JOBS_WORKER_TOKEN")
+    response = client.post(
+        "/internal/post-meeting-jobs", headers=_internal(), json={
+            "kind": "diarization", "meeting_id": _seed_meeting(pg_url),
+            "recording_id": "recording-1", "recording_version": 1,
+        }
+    )
+    assert response.status_code == 503
+    assert _job_count(pg_url) == 0
 
 
 def test_worker_routes_claim_once_reclaim_expired_and_reject_stale_lease(client, pg_url):
