@@ -15,7 +15,10 @@ import json
 import os
 from typing import Optional
 
+import httpx
 from fastapi import APIRouter, File, Form, Header, HTTPException, Request, UploadFile
+
+from ..collector.ports import TranscriptStore
 from fastapi.responses import JSONResponse, Response
 
 from .ports import RecordingRepo, Storage
@@ -109,9 +112,90 @@ def build_router(
     storage: Storage,
     *,
     token_secret: Optional[str] = None,
+    transcript_store: Optional[TranscriptStore] = None,
 ) -> APIRouter:
     """The recordings routes over the injected ``RecordingRepo`` + ``Storage`` ports."""
     router = APIRouter()
+
+    async def _owned_recording(recording_id: int, x_user_id: Optional[str]) -> dict:
+        user_id = _resolve_user_id(x_user_id)
+        recording = next(
+            (item for item in await repo.list_meeting_recordings(user_id) if item.get("id") == recording_id),
+            None,
+        )
+        if recording is None:
+            raise HTTPException(status_code=404, detail="Recording not found")
+        return recording
+
+    def _audio_preflight(recording: dict) -> dict:
+        audio = next((item for item in recording.get("media_files", []) if item.get("type") == "audio"), None)
+        return {
+            "recording_id": recording["id"],
+            "meeting_id": recording.get("meeting_id"),
+            "eligible": bool(audio and audio.get("is_final")),
+            "reason": None if audio and audio.get("is_final") else "Recording audio is not finalized",
+            "audio": {
+                "is_final": bool(audio and audio.get("is_final")),
+                "chunk_count": (audio or {}).get("chunk_count", 0),
+                "storage_path": (audio or {}).get("storage_path"),
+            },
+        }
+
+    @router.get("/recordings/{recording_id}/transcription/preflight")
+    async def transcription_preflight(
+        recording_id: int, x_user_id: Optional[str] = Header(default=None),
+    ):
+        return _audio_preflight(await _owned_recording(recording_id, x_user_id))
+
+    @router.post("/recordings/{recording_id}/transcription/retry")
+    async def retry_recording_master(
+        recording_id: int, x_user_id: Optional[str] = Header(default=None),
+    ):
+        recording = await _owned_recording(recording_id, x_user_id)
+        preflight = _audio_preflight(recording)
+        if not preflight["eligible"]:
+            raise HTTPException(status_code=409, detail=preflight["reason"])
+        master_key = await finalize_master(
+            repo, storage, meeting_id=recording["meeting_id"], recording_id=recording_id, media_type="audio"
+        )
+        if master_key is None:
+            raise HTTPException(status_code=409, detail="Recording master is unavailable")
+        if transcript_store is None:
+            return {**preflight, "master_key": master_key, "transcription_dispatched": False}
+        stt_url = os.getenv("TRANSCRIPTION_SERVICE_URL", "").rstrip("/")
+        if not stt_url:
+            raise HTTPException(status_code=503, detail="Transcription service is not configured")
+        try:
+            async with httpx.AsyncClient(timeout=7200.0) as client:
+                audio_format = next(
+                    (item.get("format") for item in recording.get("media_files", []) if item.get("type") == "audio"),
+                    "wav",
+                )
+                response = await client.post(
+                    f"{stt_url}/v1/audio/transcriptions",
+                    headers={"Authorization": f"Bearer {os.getenv('TRANSCRIPTION_SERVICE_TOKEN', '')}"},
+                    files={"file": (f"recording.{audio_format}", await storage.get(master_key), f"audio/{audio_format}")},
+                    data={"model": os.getenv("TRANSCRIPTION_MODEL") or "whisper-1", "response_format": "verbose_json"},
+                )
+                response.raise_for_status()
+                payload = response.json()
+        except (httpx.HTTPError, ValueError) as error:
+            raise HTTPException(status_code=502, detail="Transcription retry failed") from error
+        raw_segments = payload.get("segments") if isinstance(payload, dict) else None
+        if not isinstance(raw_segments, list):
+            raise HTTPException(status_code=502, detail="Transcription retry returned no segments")
+        segments = [
+            {"segment_id": f"recording-retry:{recording_id}:{index}", "start": item.get("start", 0),
+             "end": item.get("end", 0), "text": str(item.get("text", "")).strip(), "speaker": None,
+             "language": payload.get("language"), "session_uid": f"recording-retry:{recording_id}"}
+            for index, item in enumerate(raw_segments)
+            if isinstance(item, dict) and str(item.get("text", "")).strip()
+        ]
+        if not segments:
+            raise HTTPException(status_code=502, detail="Transcription retry returned empty segments")
+        await transcript_store.upsert_segments(recording["meeting_id"], segments)
+        return {**preflight, "master_key": master_key, "transcription_dispatched": True,
+                "persisted_segments": len(segments), "language": payload.get("language")}
 
     @router.post("/internal/recordings/upload", include_in_schema=False)
     async def internal_upload_recording(
@@ -140,7 +224,10 @@ def build_router(
             raise HTTPException(status_code=422, detail="session_uid required (flat field or metadata)")
         media_type = media_type or meta.get("media_type") or "audio"
         media_format = media_format or meta.get("media_format") or meta.get("format") or "wav"
-        chunk_seq = chunk_seq if chunk_seq is not None else int(meta.get("chunk_seq", 0) or 0)
+        try:
+            chunk_seq = chunk_seq if chunk_seq is not None else int(meta.get("chunk_seq", 0) or 0)
+        except (TypeError, ValueError):
+            raise HTTPException(status_code=422, detail="chunk_seq must be an integer")
         is_final = is_final if is_final is not None else bool(meta.get("is_final", True))
         duration_seconds = duration_seconds if duration_seconds is not None else meta.get("duration_seconds")
         sample_rate = sample_rate if sample_rate is not None else meta.get("sample_rate")
@@ -157,7 +244,10 @@ def build_router(
                 claims = _verify_meeting_token(bearer, secret=token_secret)
             except ValueError as e:
                 raise HTTPException(status_code=401, detail=f"Invalid recording upload token: {e}")
-            token_meeting_id = int(claims["meeting_id"])
+            try:
+                token_meeting_id = int(claims["meeting_id"])
+            except (KeyError, TypeError, ValueError) as error:
+                raise HTTPException(status_code=401, detail="Invalid recording upload token meeting") from error
 
         data = await file.read()
         try:

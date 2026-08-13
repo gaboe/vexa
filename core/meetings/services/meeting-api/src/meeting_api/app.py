@@ -285,7 +285,11 @@ def create_app(
         recording_repo = _recordings_fakes().InMemoryRecordingRepo()
     if storage is None:
         storage = _recordings_fakes().InMemoryStorage()
-    app.include_router(_recordings.build_router(recording_repo, storage, token_secret=token_secret))
+    app.include_router(
+        _recordings.build_router(
+            recording_repo, storage, token_secret=token_secret, transcript_store=transcript_store
+        )
+    )
 
     # --- webhooks: GET /webhooks/deliveries — the per-user delivery history the dashboard reads (#841) ---
     app.include_router(_build_webhooks_router(delivery_ledger))

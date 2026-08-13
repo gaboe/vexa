@@ -54,13 +54,13 @@ def _seeded():
     return repo, InMemoryStorage()
 
 
-def _client_for(repo, storage):
+def _client_for(repo, storage, transcript_store=None):
     """A TestClient over the SAME repo+storage a test already uploaded chunks into (so the user read
     path GET /recordings -> /master -> /raw sees what upload_chunk wrote)."""
     from fastapi import FastAPI
 
     app = FastAPI()
-    app.include_router(build_router(repo, storage, token_secret=SECRET))
+    app.include_router(build_router(repo, storage, token_secret=SECRET, transcript_store=transcript_store))
     return TestClient(app)
 
 
@@ -492,6 +492,85 @@ async def test_master_route_reflects_late_chunks_after_midread():
     assert raw.content == build_recording_master(early + late, "wav")
 
 
+async def test_transcription_preflight_and_master_retry_are_owner_scoped_and_idempotent():
+    repo, storage = _seeded()
+    receipt = await upload_chunk(
+        repo, storage, token_meeting_id=MEETING_ID, session_uid=SESSION_UID,
+        data=_wav(), media_format="wav", chunk_seq=0, is_final=True,
+    )
+    client = _client_for(repo, storage)
+    preflight = client.get(
+        f"/recordings/{receipt['recording_id']}/transcription/preflight", headers=_HDRS,
+    )
+    assert preflight.status_code == 200
+    assert preflight.json()["eligible"] is True
+    first = client.post(
+        f"/recordings/{receipt['recording_id']}/transcription/retry", headers=_HDRS,
+    )
+    second = client.post(
+        f"/recordings/{receipt['recording_id']}/transcription/retry", headers=_HDRS,
+    )
+    assert first.status_code == second.status_code == 200
+    assert first.json()["master_key"] == second.json()["master_key"]
+    assert len([key for key in storage.blobs if key.endswith("/audio/master.wav")]) == 1
+    assert client.get(
+        f"/recordings/{receipt['recording_id']}/transcription/preflight", headers={"x-user-id": "999"},
+    ).status_code == 404
+
+
+def test_transcription_retry_persists_deterministic_segments(monkeypatch):
+    import asyncio
+    from meeting_api.recordings import router as recording_router
+
+    class Store:
+        def __init__(self):
+            self.calls = []
+        async def upsert_segments(self, meeting_id, segments):
+            self.calls.append((meeting_id, segments))
+
+    class Response:
+        def raise_for_status(self):
+            return None
+        def json(self):
+            return {"language": "cs", "segments": [{"start": 0, "end": 1, "text": "Ahoj"}]}
+
+    class Client:
+        async def __aenter__(self):
+            return self
+        async def __aexit__(self, *_):
+            return None
+        async def post(self, *_args, **_kwargs):
+            return Response()
+
+    monkeypatch.setattr(recording_router.httpx, "AsyncClient", lambda **_kwargs: Client())
+    monkeypatch.setenv("TRANSCRIPTION_SERVICE_URL", "http://local-stt")
+    repo, storage = _seeded()
+    receipt = asyncio.run(upload_chunk(
+        repo, storage, token_meeting_id=MEETING_ID, session_uid=SESSION_UID,
+        data=_wav(), media_format="wav", chunk_seq=0, is_final=True,
+    ))
+    store = Store()
+    response = _client_for(repo, storage, store).post(
+        f"/recordings/{receipt['recording_id']}/transcription/retry", headers=_HDRS,
+    )
+    assert response.status_code == 200
+    assert response.json()["persisted_segments"] == 1
+    assert store.calls[0][1][0]["segment_id"] == f"recording-retry:{receipt['recording_id']}:0"
+
+
+async def test_transcription_retry_rejects_unfinalized_audio():
+    repo, storage = _seeded()
+    receipt = await upload_chunk(
+        repo, storage, token_meeting_id=MEETING_ID, session_uid=SESSION_UID,
+        data=_wav(), media_format="wav", chunk_seq=0, is_final=False,
+    )
+    response = _client_for(repo, storage).post(
+        f"/recordings/{receipt['recording_id']}/transcription/retry", headers=_HDRS,
+    )
+    assert response.status_code == 409
+    assert response.json()["detail"] == "Recording audio is not finalized"
+
+
 # ── #769: chunk listing must paginate past the S3 1000-key cap ────────────────────────────────────
 
 
@@ -509,7 +588,7 @@ class _PagedS3Client:
         matched = [k for k in self._keys if k.startswith(Prefix)]
         start = int(ContinuationToken) if ContinuationToken else 0
         page = matched[start : start + self.PAGE]
-        resp = {"Contents": [{"Key": k} for k in page]}
+        resp: dict[str, object] = {"Contents": [{"Key": k} for k in page]}
         nxt = start + self.PAGE
         if nxt < len(matched):
             resp["IsTruncated"] = True

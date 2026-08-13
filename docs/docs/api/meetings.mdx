@@ -287,6 +287,14 @@ Import RTTM generated locally by SpeakerKit after a meeting. Vexa does not uploa
 or start background work. Only the meeting owner can import one or two RTTM speakers; overlapping transcript
 segments receive deterministic anonymous `Speaker A`/`Speaker B` labels. Repeating identical input is a no-op.
 
+### Retry a retained recording
+
+`GET /recordings/{recording_id}/transcription/preflight` is read-only and owner-scoped. It reports whether finalized audio exists and is eligible for a retry. Only after reviewing that response, call `POST /recordings/{recording_id}/transcription/retry`; it rebuilds the retained master, sends it to the configured transcription service, and durable-upserts deterministic `recording-retry:{recording_id}:{index}` segment IDs. Repeating a completed retry updates the same IDs rather than creating duplicate transcript rows. This synchronous route does not provide cross-process single-flight scheduling; use the preflight response before an operator-triggered retry.
+
+### Google Workspace calendar
+
+Vexa's current calendar connection accepts a private ICS feed, not Google OAuth. In Google Calendar, open **Settings → your calendar → Integrate calendar**, copy **Secret address in iCal format**, then paste it into **Connect your calendar** in Vexa. Google Calendar API/GWS CLI intentionally does not reveal that secret URL. Treat it as a credential: do not commit it or send it in chat.
+
 For a manual macOS post-processing run, use `scripts/diarize-recording.sh` with a locally installed
 `argmax-cli` built from [Argmax OSS Swift](https://github.com/argmaxinc/argmax-oss-swift), whose `diarize`
 command runs SpeakerKit. Set `VEXA_API_BASE`, `VEXA_API_KEY`, `VEXA_RECORDING_ID`, `VEXA_USER_ID`,
