@@ -4,7 +4,8 @@
  "capabilities": {
   "post_meeting_jobs": {
    "mode": "all",
-   "description": "worker lease API for durable post-meeting jobs; disabled until its worker credential is configured"
+   "description": "worker lease API for durable post-meeting jobs; disabled until its worker credential is configured",
+   "when_unconfigured": "disabled"
   }
  },
  "keys": [
@@ -13,7 +14,8 @@
    "class": "capability",
    "capability": "post_meeting_jobs",
    "secret": true,
-   "description": "worker authentication credential for the internal post-meeting job lease API; unset keeps the API disabled"
+   "description": "worker authentication credential for the internal post-meeting job lease API; unset keeps the API disabled",
+   "targets": []
   },
   {
    "key": "INTERNAL_API_SECRET",
