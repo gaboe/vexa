@@ -277,6 +277,8 @@ def create_app(
     app.include_router(_build_collector_router(transcript_store, redis,
                                             calendar_sync_now=calendar_sync_now,
                                             calendar_sync_status=calendar_sync_status))
+    from .diarization import build_router as _build_diarization_router
+    app.include_router(_build_diarization_router(transcript_store))
 
     # --- recordings: chunk upload + finalize → meeting.data JSONB (recording.v1) ---
     if recording_repo is None:

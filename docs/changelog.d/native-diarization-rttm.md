@@ -1,0 +1,1 @@
+- **Local RTTM speaker-label import.** Meeting owners can opt in to apply one- or two-speaker SpeakerKit RTTM output to an existing transcript without Vexa running native diarization or receiving audio.

@@ -10,7 +10,7 @@ is the public Vexa API — the same surface whether you use the hosted service o
 ## Base URL & auth
 
 | | |
-|---|---|
+| --- | --- |
 | Hosted | `https://api.cloud.vexa.ai` |
 | Self-hosted | `http://localhost:18056` (the gateway; `API_GATEWAY_HOST_PORT`, default `18056`) |
 
@@ -25,7 +25,7 @@ Every request carries your key:
 Pass one of these as `platform`:
 
 | Platform | `platform` value |
-|---|---|
+| --- | --- |
 | Google Meet | `google_meet` |
 | Zoom | `zoom` |
 | Microsoft Teams | `teams` |
@@ -49,7 +49,7 @@ names come from the conference's own dominant-speaker signal.
 A meeting is **one record from plan to transcript**:
 
 | Phase | `status` values | Who owns it |
-|---|---|---|
+| --- | --- | --- |
 | Planned (intent) | `idle` (no time) · `scheduled` (time set) | you — freely editable |
 | Live (bot FSM) | `requested` · `joining` · `awaiting_admission` · `needs_help` · `active` · `stopping` | the bot lifecycle |
 | Terminal | `completed` · `failed` | — |
@@ -110,7 +110,7 @@ the running implementation. This table states, per route, whether the `(platform
 native_meeting_id)` keying a 0.10 client uses is served by the 0.12 core:
 
 | Route | Native-id keying in 0.12 |
-|---|---|
+| --- | --- |
 | `PATCH /meetings/{platform}/{native_meeting_id}` | **Yes** — resolves to your newest owned row. |
 | `DELETE /meetings/{platform}/{native_meeting_id}` | **Yes** — `200` on success (by-id path is `204`). |
 | `GET /bots/status` | **Yes** — body carries both `running_bots` (0.10) and `running`/`count` (0.12). |
@@ -274,6 +274,24 @@ curl -H "X-API-Key: $API_KEY" \
 Segments stream in while the meeting runs — poll this endpoint, or subscribe over **WebSocket** for live,
 per-segment updates. Live drafts arrive as `completed: false` and are replaced by `completed: true`
 confirmations.
+
+### Import local RTTM labels
+
+```bash
+curl -X POST "$API_BASE/meetings/google_meet/abc-defg-hij/diarization/rttm" \
+  -H "X-API-Key: $API_KEY" -H "Content-Type: application/json" \
+  -d '{"rttm":"SPEAKER local 1 0.0 2.0 <NA> <NA> spk0 <NA> <NA>"}'
+```
+
+Import RTTM generated locally by SpeakerKit after a meeting. Vexa does not upload audio, run SpeakerKit,
+or start background work. Only the meeting owner can import one or two RTTM speakers; overlapping transcript
+segments receive deterministic anonymous `Speaker A`/`Speaker B` labels. Repeating identical input is a no-op.
+
+For a manual macOS post-processing run, use `scripts/diarize-recording.sh` with a locally installed
+`argmax-cli` built from [Argmax OSS Swift](https://github.com/argmaxinc/argmax-oss-swift), whose `diarize`
+command runs SpeakerKit. Set `VEXA_API_BASE`, `VEXA_API_KEY`, `VEXA_RECORDING_ID`, `VEXA_USER_ID`,
+`VEXA_PLATFORM`, and `VEXA_NATIVE_MEETING_ID`; the script verifies the matching owner ID and finalized
+directory, creates RTTM locally, imports labels, and removes the temporary audio on exit.
 
 ## Manage the bot
 
