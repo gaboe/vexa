@@ -12,7 +12,7 @@
 // and has no cross-process single-flight, so the button is disabled for the whole call.
 import { useEffect, useState } from "react";
 import { presentError } from "../surfaces/apiClient";
-import { fetchRetryPreflight, retryTranscription } from "../surfaces/recordingRetry";
+import { fetchAudioRecordingId, fetchRetryPreflight, retryTranscription } from "../surfaces/recordingRetry";
 import { refreshDurableTranscript, useMeeting } from "./useMeeting";
 
 // Same muted/accent pair the health banner uses — informational until something actually fails.
@@ -25,11 +25,12 @@ type Phase = { kind: "idle" } | { kind: "running" } | { kind: "failed"; message:
 
 export function TranscriptRetryBanner() {
   const meeting = useMeeting();
-  const recordingId = meeting.meeting.recordingId;
+  const meetingId = Number(meeting.meeting.id);
   const empty = (meeting.transcript.segments ?? []).length === 0;
   // A live meeting is still filling its recording: the audio is not final, so a retry is meaningless
   // and preflight would only echo "not finalized" under the health banner's "Waiting for transcript…".
-  const idle = recordingId != null && empty && !meeting.meeting.live;
+  const idle = Number.isFinite(meetingId) && empty && !meeting.meeting.live;
+  const [recordingId, setRecordingId] = useState<number | undefined>(undefined);
 
   // undefined = preflight has not ANSWERED (in flight, or the call itself failed). "The server says no"
   // and "the server didn't say" are different states and must never share a headline — a failed
@@ -40,13 +41,20 @@ export function TranscriptRetryBanner() {
   useEffect(() => {
     setPreflight(undefined);
     setPhase({ kind: "idle" });
-    if (!idle || recordingId == null) return;
+    setRecordingId(undefined);
+    if (!idle) return;
     let cancelled = false;
-    void fetchRetryPreflight(recordingId)
-      .then((p) => { if (!cancelled) setPreflight({ eligible: !!p.eligible, reason: p.reason ?? undefined }); })
+    void fetchAudioRecordingId(meetingId)
+      .then((id) => {
+        if (cancelled || id == null) return;   // no recording → nothing a retry could act on
+        setRecordingId(id);
+        return fetchRetryPreflight(id).then((p) => {
+          if (!cancelled) setPreflight({ eligible: !!p.eligible, reason: p.reason ?? undefined });
+        });
+      })
       .catch((e) => { presentError(e); /* logged; no answer → no banner */ });
     return () => { cancelled = true; };
-  }, [recordingId, idle]);
+  }, [meetingId, idle]);
 
   if (!idle || recordingId == null || !preflight) return null;
   const { eligible, reason } = preflight;

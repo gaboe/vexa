@@ -23,6 +23,28 @@ export function fetchRetryPreflight(recordingId: number): Promise<RetryPreflight
   return getJson<RetryPreflight>(`/api/recordings/${recordingId}/transcription/preflight`);
 }
 
+interface RecordingRow {
+  id: number;
+  meeting_id?: number;
+  created_at?: string;
+  media_files?: { type?: string }[];
+}
+
+/** The audio-bearing recording of one meeting, or undefined when the meeting has none.
+ *
+ *  Sourced from `GET /recordings` rather than the meeting row: the meetings projection carries the
+ *  meeting's `data` WITHOUT its `recordings` array, so a meeting payload can never answer this. The
+ *  newest audio-bearing recording wins — a re-sent bot appends another recording to the same meeting,
+ *  and the last one is the one a user looking at an empty transcript means. */
+export async function fetchAudioRecordingId(meetingId: number): Promise<number | undefined> {
+  const { recordings } = await getJson<{ recordings?: RecordingRow[] }>("/api/recordings");
+  const mine = (recordings ?? []).filter(
+    (r) => r.meeting_id === meetingId && (r.media_files ?? []).some((f) => f.type === "audio"),
+  );
+  if (mine.length === 0) return undefined;
+  return mine.sort((a, b) => String(a.created_at ?? "").localeCompare(String(b.created_at ?? "")))[mine.length - 1].id;
+}
+
 /** Fire the retry. Resolves when the transcription finished and the segments were upserted
  *  (deterministic `recording-retry:{id}:{index}` ids — repeating updates the same rows). */
 export function retryTranscription(recordingId: number): Promise<unknown> {

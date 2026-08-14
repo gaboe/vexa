@@ -2,12 +2,14 @@ import { describe, expect, it, vi, beforeEach } from "vitest";
 import { act } from "react";
 import { createRoot } from "react-dom/client";
 
+const lookup = vi.fn();
 const preflight = vi.fn();
 const retry = vi.fn();
 const refresh = vi.fn();
 let state: any;
 
 vi.mock("../../surfaces/recordingRetry", () => ({
+  fetchAudioRecordingId: (meetingId: number) => lookup(meetingId),
   fetchRetryPreflight: (id: number) => preflight(id),
   retryTranscription: (id: number) => retry(id),
 }));
@@ -19,7 +21,10 @@ vi.mock("../useMeeting", () => ({
 import { TranscriptRetryBanner } from "../TranscriptRetryBanner";
 
 function meetingState(recordingId: number | undefined, segments: unknown[] = [], live = false) {
-  return { meeting: { id: "4", title: "m", recordingId, live }, transcript: { segments } };
+  // The recording id no longer rides the meeting row — the meetings projection omits `recordings`,
+  // so the banner looks it up by meeting id. The parameter drives that lookup instead.
+  lookup.mockResolvedValue(recordingId);
+  return { meeting: { id: "4", title: "m", live }, transcript: { segments } };
 }
 
 async function render() {
@@ -33,7 +38,7 @@ async function render() {
 const button = (c: HTMLElement) => c.querySelector("button") as HTMLButtonElement | null;
 
 describe("TranscriptRetryBanner", () => {
-  beforeEach(() => { preflight.mockReset(); retry.mockReset(); refresh.mockReset(); });
+  beforeEach(() => { lookup.mockReset(); preflight.mockReset(); retry.mockReset(); refresh.mockReset(); });
 
   it("renders nothing when the meeting already has transcript segments", async () => {
     state = meetingState(489531790697, [{ text: "hi" }]);

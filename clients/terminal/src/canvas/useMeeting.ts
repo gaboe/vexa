@@ -427,7 +427,6 @@ function useLiveMeetingState(meetingId?: string): MeetingState {
       meeting: {
         id: selected.id,
         nativeId: selected.native_id,
-        recordingId: selected.recording_id,
         title: selected.title,
         status: selected.live_status ?? selected.status,
         live: Boolean(selected.session_uid),
