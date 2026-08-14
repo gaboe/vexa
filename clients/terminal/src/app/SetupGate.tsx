@@ -142,7 +142,7 @@ function ModelsStep({ onNext }: { onNext: (state: StepState) => void }) {
           <Radio on={choice === "custom"} /> OpenRouter or custom endpoint
         </div>
         <div style={{ fontSize: 11.5, color: "var(--t3)", lineHeight: 1.5, marginLeft: 22 }}>
-          Any Anthropic/OpenAI-compatible endpoint. Bring your own key.
+          Any Anthropic/OpenAI-compatible endpoint, with or without a trailing <code style={{ fontFamily: "var(--mono)" }}>/v1</code>. Bring your own key.
         </div>
         {choice === "custom" && (
           <div style={{ marginLeft: 22, display: "flex", flexDirection: "column", gap: 7 }}>
@@ -245,7 +245,8 @@ function TranscriptionStep({ onNext }: { onNext: (state: StepState) => void }) {
           <Radio on={choice === "custom"} /> OpenAI-compatible endpoint
         </div>
         <div style={{ fontSize: 11.5, color: "var(--t3)", lineHeight: 1.5, marginLeft: 22 }}>
-          Any service speaking the OpenAI transcription API (Whisper-compatible).
+          Any service speaking the OpenAI transcription API (Whisper-compatible), with or without a
+          trailing <code style={{ fontFamily: "var(--mono)" }}>/v1</code>.
         </div>
         {choice === "custom" && (
           <div style={{ marginLeft: 22, display: "flex", flexDirection: "column", gap: 7 }}>
