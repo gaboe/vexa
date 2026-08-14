@@ -7,6 +7,7 @@ from datetime import datetime, timedelta, timezone
 
 from sqlalchemy import and_, case, or_, select, update
 from sqlalchemy.dialects.postgresql import insert
+from sqlalchemy.exc import IntegrityError
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from .schema.models import PostMeetingJob
@@ -23,6 +24,14 @@ BACKOFF_CAP_SECONDS = 3600
 
 class StaleLeaseError(Exception):
     pass
+
+
+class UnknownMeetingError(Exception):
+    """Enqueue named a meeting_id that meetings.id does not have."""
+
+    def __init__(self, meeting_id: int) -> None:
+        super().__init__(f"Unknown meeting {meeting_id}")
+        self.meeting_id = meeting_id
 
 
 @dataclass(frozen=True)
@@ -63,14 +72,22 @@ class PostMeetingJobRepository:
             "recording_version": recording_version,
             "status": PENDING,
         }
-        created = await session.scalar(
-            insert(PostMeetingJob)
-            .values(**values)
-            .on_conflict_do_nothing(
-                constraint="uq_post_meeting_job_identity"
+        try:
+            created = await session.scalar(
+                insert(PostMeetingJob)
+                .values(**values)
+                .on_conflict_do_nothing(
+                    constraint="uq_post_meeting_job_identity"
+                )
+                .returning(PostMeetingJob)
             )
-            .returning(PostMeetingJob)
-        )
+        except IntegrityError as exc:
+            # The FK failure aborts the transaction; roll back so the session stays usable.
+            await session.rollback()
+            # meeting_id is the table's only FK, so 23503 here can only be the unknown meeting.
+            if getattr(exc.orig, "sqlstate", None) == "23503":
+                raise UnknownMeetingError(meeting_id) from exc
+            raise
         if created is not None:
             await session.commit()
             return created
