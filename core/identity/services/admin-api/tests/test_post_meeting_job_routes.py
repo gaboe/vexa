@@ -10,7 +10,11 @@ from sqlalchemy.orm import Session
 
 from admin_api.app import db as app_db
 from admin_api.app.main import create_app
-from admin_api.post_meeting_jobs import PostMeetingJobRepository, StaleLeaseError
+from admin_api.post_meeting_jobs import (
+    PostMeetingJobRepository,
+    StaleLeaseError,
+    UnknownMeetingError,
+)
 from admin_api.schema.models import Base, Meeting, PostMeetingJob
 from admin_api.schema.sync import ensure_schema_sync
 from test_stack_admin_api import _dispose_async_engine
@@ -332,3 +336,41 @@ def test_worker_routes_stay_disabled_without_worker_credential(client, monkeypat
     monkeypatch.delenv("POST_MEETING_JOBS_WORKER_TOKEN")
     response = client.post("/internal/post-meeting-jobs/claim", json={"kind": "diarization"})
     assert response.status_code == 503
+
+
+def test_enqueue_against_unknown_meeting_is_404_not_500(client, pg_url):
+    response = client.post(
+        "/internal/post-meeting-jobs", headers=_internal(), json={
+            "kind": "local_diarization", "meeting_id": 987654321,
+            "recording_id": "probe-1", "recording_version": 1,
+        }
+    )
+    assert response.status_code == 404, response.text
+    assert "meeting" in response.json()["detail"].lower()
+    assert "987654321" in response.json()["detail"]
+    assert _job_count(pg_url) == 0
+
+
+def test_unknown_meeting_leaves_the_session_usable(client, pg_url, pg_async_url):
+    """The FK failure must roll back — the same session has to keep working after it."""
+    meeting_id = _seed_meeting(pg_url)
+    app_db.configure(pg_async_url)
+
+    async def exercise():
+        sessions = async_sessionmaker(app_db.get_engine(), expire_on_commit=False)
+        repo = PostMeetingJobRepository()
+        async with sessions() as session:
+            with pytest.raises(UnknownMeetingError):
+                await repo.insert_or_get(
+                    session, kind="local_diarization", meeting_id=987654321,
+                    recording_id="probe-1", recording_version=1,
+                )
+            # Same session, after the poisoning failure: must still work.
+            job = await repo.insert_or_get(
+                session, kind="local_diarization", meeting_id=meeting_id,
+                recording_id="probe-1", recording_version=1,
+            )
+            assert job.meeting_id == meeting_id
+
+    asyncio.run(exercise())
+    assert _job_count(pg_url) == 1

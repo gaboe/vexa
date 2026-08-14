@@ -29,7 +29,7 @@ from sqlalchemy.future import select
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from ..config_preflight import CONFIGURED, capability_state
-from ..post_meeting_jobs import PostMeetingJobRepository, StaleLeaseError
+from ..post_meeting_jobs import PostMeetingJobRepository, StaleLeaseError, UnknownMeetingError
 from ..schema.models import APIToken, PlatformSetting, PostMeetingJob, User
 from ..token_scope import VALID_SCOPES, generate_prefixed_token
 from .db import get_db
@@ -990,7 +990,13 @@ def create_app() -> FastAPI:
     ):
         _check_internal(request)
         _check_post_meeting_jobs_enabled()
-        job = await PostMeetingJobRepository().insert_or_get(db, **payload.model_dump())
+        try:
+            job = await PostMeetingJobRepository().insert_or_get(db, **payload.model_dump())
+        except UnknownMeetingError as exc:
+            raise HTTPException(
+                status.HTTP_404_NOT_FOUND,
+                detail=f"Unknown meeting {exc.meeting_id}",
+            )
         return {"job": _post_meeting_job_response(job)}
 
     @app.post("/internal/post-meeting-jobs/claim", include_in_schema=False)
