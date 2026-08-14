@@ -199,6 +199,37 @@ configuration or an admin failure leaves meeting completion unaffected.
 | `ADMIN_API_URL` | — | admin-api base URL for the sweeps' internal lookups and opt-in local diarization enqueue. |
 | `LOCAL_DIARIZATION_ENABLED` | `false` | Set `true` to enqueue finalized completed recordings for local diarization. Requires `ADMIN_API_URL` and `INTERNAL_API_SECRET`; otherwise no request is made. |
 
+## Local diarization jobs
+
+Two halves, each opt-in on its own. The **producer** is `LOCAL_DIARIZATION_ENABLED` above: a
+completed meeting enqueues one durable `local_diarization` job per recording once its audio master
+finalizes. Jobs live in admin-api, which only accepts them once `POST_MEETING_JOBS_WORKER_TOKEN` is
+set — unset, both the enqueue and the worker lease API answer `503` and nothing else changes.
+
+The **consumer** is a one-shot CLI you run yourself:
+
+```bash
+ADMIN_API_URL=http://admin-api:8001 \
+POST_MEETING_JOBS_WORKER_TOKEN=… \
+LOCAL_DIARIZATION_CLI=argmax-cli \
+python -m meeting_api.post_meeting.diarize_once
+```
+
+It claims one job under a lease, reads that recording's finalized master, runs the diarizer, imports
+the RTTM onto the meeting's transcript segments, and completes the lease. Exit `0` means a job
+finished or the queue was empty, so a cron entry or a Kubernetes `CronJob` is all the scheduling it
+needs — the lease, not the schedule, is what keeps two runners off the same job.
+
+It must run somewhere that has **`ffmpeg` and your diarizer binary on `PATH`**; the stock meeting-api
+image ships neither, so run it on an operator host or in your own image. Transient failures (storage
+read, diarizer crash, admin unreachable) are retried with backoff up to five attempts; structural
+ones (no finalized master, unparsable RTTM) fail permanently on the first try.
+
+| Variable | Default | Purpose |
+|---|---|---|
+| `POST_MEETING_JOBS_WORKER_TOKEN` | — | Worker credential, shared with admin-api. Unset ⇒ the whole lane stays disabled. |
+| `LOCAL_DIARIZATION_CLI` | `argmax-cli` | The diarizer binary invoked as `<cli> diarize --audio-path … --rttm-path … --use-exclusive-reconciliation`. |
+
 ## Images & runtime
 
 | Variable | Default | Purpose |

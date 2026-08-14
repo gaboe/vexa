@@ -284,8 +284,12 @@ curl -X POST "$API_BASE/meetings/google_meet/abc-defg-hij/diarization/rttm" \
 ```
 
 Import RTTM generated locally by SpeakerKit after a meeting. Vexa does not upload audio, run SpeakerKit,
-or start background work. Only the meeting owner can import one or two RTTM speakers; overlapping transcript
-segments receive deterministic anonymous `Speaker A`/`Speaker B` labels. Repeating identical input is a no-op.
+or start background work on this route. Only the meeting owner can import; overlapping transcript segments
+receive deterministic anonymous labels (`Speaker A`, `Speaker B`, … and `Speaker AA` onwards past 26).
+Repeating identical input is a no-op.
+
+Operators who enabled the post-meeting job lane can let the bundled consumer do this instead — see
+[local diarization](/configuration#local-diarization-jobs).
 
 ### Retry a retained recording
 

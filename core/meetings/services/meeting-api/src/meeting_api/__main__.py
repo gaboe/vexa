@@ -60,20 +60,39 @@ def _require_config(env: "os._Environ | dict | None" = None) -> None:
     preflight(env)
 
 
+def build_session_factory():
+    """The production async SQLAlchemy session factory (env-steered pool). Shared by the served app
+    and the one-shot post-meeting workers, so there is exactly ONE DB composition root."""
+    from sqlalchemy.ext.asyncio import async_sessionmaker
+
+    from .db import build_engine
+
+    return async_sessionmaker(build_engine(_database_url()), expire_on_commit=False)
+
+
+def build_recordings_storage():
+    """The production object-storage adapter (MinIO/S3) for recording chunks + masters."""
+    from .recordings.adapters import S3Storage
+
+    return S3Storage(
+        bucket=os.getenv("MINIO_BUCKET", os.getenv("RECORDING_BUCKET", "vexa")),
+        endpoint_url=os.getenv("S3_ENDPOINT") or _minio_endpoint_url(),
+        access_key=os.getenv("S3_ACCESS_KEY") or os.getenv("MINIO_ACCESS_KEY"),
+        secret_key=os.getenv("S3_SECRET_KEY") or os.getenv("MINIO_SECRET_KEY"),
+    )
+
+
 def build_production_app():
     """Wire the unified meeting-api with the real adapters + the lifespan-driven loops."""
     _require_config()  # A4: refuse to boot a misconfigured deploy (no ADMIN_TOKEN → every spawn 500s).
 
     import redis.asyncio as aioredis
-    from sqlalchemy.ext.asyncio import async_sessionmaker
 
     from . import create_app
-    from .db import build_engine
     from .bot_spawn.adapters import HttpRuntimeClient, SqlAlchemyMeetingRepo
     from .collector.adapters import RedisStreamBus, SqlAlchemyTranscriptStore
-    from .recordings.adapters import S3Storage, SqlAlchemyRecordingRepo
+    from .recordings.adapters import SqlAlchemyRecordingRepo
 
-    database_url = _database_url()
     redis_url = os.getenv("REDIS_URL", "redis://redis:6379/0")
     runtime_api_url = os.getenv("RUNTIME_API_URL", "http://runtime:8090")
     # MeetingToken is HS256-signed (mint) AND verified (recordings upload) with the SAME secret =
@@ -81,8 +100,7 @@ def build_production_app():
     # validation only — a different concern.) None → the recordings verifier falls back to ADMIN_TOKEN.
     token_secret = os.getenv("ADMIN_TOKEN") or None
 
-    engine = build_engine(database_url)  # #635: env-steered pool (pool_pre_ping preserved in the helper)
-    session_factory = async_sessionmaker(engine, expire_on_commit=False)
+    session_factory = build_session_factory()  # #635: env-steered pool (pool_pre_ping in the helper)
     # #528: harden the shared Redis client so a Redis outage surfaces as a bounded exception the
     # per-tick handlers already catch — not a hung/zombie socket that only a restart heals. Same
     # kwargs as the gateway (adapters.py): socket_timeout bounds every await, keepalive + health
@@ -107,12 +125,7 @@ def build_production_app():
     service_authority = build_service_authority_from_env()
 
     recording_repo = SqlAlchemyRecordingRepo(session_factory)
-    storage = S3Storage(
-        bucket=os.getenv("MINIO_BUCKET", os.getenv("RECORDING_BUCKET", "vexa")),
-        endpoint_url=os.getenv("S3_ENDPOINT") or _minio_endpoint_url(),
-        access_key=os.getenv("S3_ACCESS_KEY") or os.getenv("MINIO_ACCESS_KEY"),
-        secret_key=os.getenv("S3_SECRET_KEY") or os.getenv("MINIO_SECRET_KEY"),
-    )
+    storage = build_recordings_storage()
 
     # Per-user webhook delivery (WebhookSink: SSRF-guard → event-filter → sign → POST → enqueue-retry).
     # httpx transport; failures route to the redis RetryQueue the background drain loop sweeps.
