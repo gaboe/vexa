@@ -34,6 +34,22 @@
       "updated_at": "Column(DateTime, server_default=func.now(), onupdate=func.now())",
       "value": "Column(JSONB, nullable=False, server_default=text(\"'{}'::jsonb\"), default=lambda: {})"
     },
+    "post_meeting_jobs": {
+      "attempts": "Column(Integer, nullable=False, server_default='0')",
+      "created_at": "Column(DateTime(timezone=True), nullable=False, server_default=func.now())",
+      "id": "Column(Integer, primary_key=True)",
+      "kind": "Column(String(64), nullable=False)",
+      "lease_expires_at": "Column(DateTime(timezone=True), nullable=True)",
+      "lease_owner": "Column(String(255), nullable=True)",
+      "lease_token_hash": "Column(String(64), nullable=True)",
+      "max_attempts": "Column(Integer, nullable=False, server_default='5')",
+      "meeting_id": "Column(Integer, ForeignKey('meetings.id'), nullable=False)",
+      "next_attempt_at": "Column(DateTime(timezone=True), nullable=True)",
+      "recording_id": "Column(String(255), nullable=False)",
+      "recording_version": "Column(Integer, nullable=False)",
+      "status": "Column(String(32), nullable=False, server_default='pending')",
+      "updated_at": "Column(DateTime(timezone=True), nullable=False, server_default=func.now(), onupdate=func.now())"
+    },
     "transcriptions": {
       "created_at": "Column(DateTime, default=datetime.utcnow)",
       "end_time": "Column(Float, nullable=False)",
