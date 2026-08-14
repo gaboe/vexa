@@ -24,6 +24,7 @@ from fastapi.responses import JSONResponse, Response
 from .ports import RecordingRepo, Storage
 from .service import (
     SIGNAL_MEDIA_TYPE,
+    InvalidRecordingChunk,
     InvalidSignalTape,
     SessionNotFound,
     _verify_meeting_token,
@@ -126,6 +127,16 @@ def build_router(
     """The recordings routes over the injected ``RecordingRepo`` + ``Storage`` ports."""
     router = APIRouter()
 
+    async def _finalize(**kwargs) -> Optional[str]:
+        """Every route's single door to ``finalize_master`` — the read paths assemble on read, so a
+        chunk the codec cannot parse must surface as unprocessable INPUT (422), never a 500. Only a
+        rebuild parses chunks, so an already-assembled master keeps streaming untouched: a good
+        recording's playback can't be turned into a 4xx by this."""
+        try:
+            return await finalize_master(repo, storage, **kwargs)
+        except InvalidRecordingChunk as e:
+            raise HTTPException(status_code=422, detail=f"Recording chunk cannot be assembled: {e}")
+
     async def _owned_recording(recording_id: int, x_user_id: Optional[str]) -> dict:
         user_id = _resolve_user_id(x_user_id)
         recording = next(
@@ -164,8 +175,8 @@ def build_router(
         preflight = _audio_preflight(recording)
         if not preflight["eligible"]:
             raise HTTPException(status_code=409, detail=preflight["reason"])
-        master_key = await finalize_master(
-            repo, storage, meeting_id=recording["meeting_id"], recording_id=recording_id, media_type="audio",
+        master_key = await _finalize(
+            meeting_id=recording["meeting_id"], recording_id=recording_id, media_type="audio",
             on_audio_finalized=on_audio_finalized,
         )
         if master_key is None:
@@ -298,6 +309,8 @@ def build_router(
             )
         except SessionNotFound as e:
             raise HTTPException(status_code=404, detail=str(e))
+        except InvalidRecordingChunk as e:
+            raise HTTPException(status_code=422, detail=str(e))
         return JSONResponse(content=receipt)
 
     @router.get("/recordings")
@@ -338,8 +351,8 @@ def build_router(
         if rec is None:
             raise HTTPException(status_code=404, detail="Recording not found")
         mf = next((m for m in rec.get("media_files", []) if m.get("type") == type), None)
-        master_key = await finalize_master(
-            repo, storage, meeting_id=rec["meeting_id"], recording_id=recording_id, media_type=type,
+        master_key = await _finalize(
+            meeting_id=rec["meeting_id"], recording_id=recording_id, media_type=type,
             on_audio_finalized=on_audio_finalized,
         )
         if master_key is None:
@@ -390,8 +403,8 @@ def build_router(
         # mid-recording read impossible to freeze at the retrieval boundary too. (A prior guard that
         # skipped finalize once storage_path already named the master key was the second freeze door:
         # after a mid-meeting /master it never re-assembled, serving the stale partial forever.)
-        await finalize_master(
-            repo, storage, meeting_id=rec["meeting_id"], recording_id=recording_id,
+        await _finalize(
+            meeting_id=rec["meeting_id"], recording_id=recording_id,
             media_type=mf.get("type", type), on_audio_finalized=on_audio_finalized,
         )
         recs = await repo.list_meeting_recordings(user_id)

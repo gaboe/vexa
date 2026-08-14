@@ -19,7 +19,7 @@ from datetime import datetime, timezone
 from typing import Any, Awaitable, Callable, Optional
 
 from ..obs import log_event
-from ..recording_codec import build_recording_master
+from ..recording_codec import InvalidRecordingChunk, build_recording_master, validate_wav_chunk
 from .jsonb import (
     SIGNAL_TAPE_PARTS,
     SIGNAL_TAPE_PART_FORMATS,
@@ -75,7 +75,17 @@ async def upload_chunk(
 
     Returns ``{recording_id, media_file_id, storage_path, status, chunk_seq}``. When the session is
     not yet known and the chunk is non-final, returns ``{"status": "pending"}`` (the bot retries).
+
+    Raises ``InvalidRecordingChunk`` (422) for bytes the codec cannot parse — BEFORE the session
+    lookup, because bad bytes are bad whatever the session state, and because a 422 stops the bot's
+    retry loop where the ``pending`` receipt would not. Rejecting here is the point of introduction:
+    an unassemblable chunk never enters ``meeting.data`` and never poisons a later master read. The
+    caller's bytes are never rewritten — an ffmpeg WAV with a ``LIST`` chunk is stored verbatim and
+    parsed on assembly.
     """
+    if (media_format or "").lower() == "wav":  # the codec's own dispatch rule, not an approximation
+        validate_wav_chunk(data)
+
     session = await repo.find_session(session_uid)
     if session is None:
         if not is_final:
