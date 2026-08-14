@@ -74,6 +74,9 @@ class RecordingRepo(Protocol):
         """The current ``meeting.data['recordings']`` list (under the same read the writer locks)."""
         ...
 
+    async def meeting_status(self, meeting_id: int) -> Optional[str]:
+        ...
+
     async def put_recordings(self, meeting_id: int, recordings: list[dict]) -> None:
         """Persist the updated ``meeting.data['recordings']`` list (the row-locked write-back)."""
         ...

@@ -1,7 +1,7 @@
 # schema — the v0.12 backing-stack SQLAlchemy source-of-truth
 
 `models.py` defines the identity + meeting tables (User, APIToken, Meeting, Transcription,
-MeetingSession). `sync.py` is `ensure_schema()` — idempotent, additive, never-drops convergence
+MeetingSession, PostMeetingJob). `sync.py` is `ensure_schema()` — idempotent, additive, never-drops convergence
 (the parent's no-alembic discipline). The dead `recordings`/`media_files` tables are dropped —
 see `MIGRATION-0001-drop-recordings.md`.
 

@@ -75,8 +75,8 @@ class InMemoryRecordingRepo:
         self._meetings: dict[int, dict] = {}
         self._sessions: dict[str, int] = {}
 
-    def seed(self, *, meeting_id: int, user_id: int, session_uid: str) -> None:
-        self._meetings.setdefault(meeting_id, {"user_id": user_id, "recordings": []})
+    def seed(self, *, meeting_id: int, user_id: int, session_uid: str, status: str = "requested") -> None:
+        self._meetings.setdefault(meeting_id, {"user_id": user_id, "recordings": [], "status": status})
         self._sessions[session_uid] = meeting_id
 
     async def find_session(self, session_uid: str) -> Optional[dict]:
@@ -86,8 +86,11 @@ class InMemoryRecordingRepo:
     async def get_recordings(self, meeting_id: int) -> list[dict]:
         return list(self._meetings.get(meeting_id, {}).get("recordings", []))
 
+    async def meeting_status(self, meeting_id: int) -> Optional[str]:
+        return self._meetings.get(meeting_id, {}).get("status")
+
     async def put_recordings(self, meeting_id: int, recordings: list[dict]) -> None:
-        self._meetings.setdefault(meeting_id, {"user_id": None, "recordings": []})
+        self._meetings.setdefault(meeting_id, {"user_id": None, "recordings": [], "status": None})
         self._meetings[meeting_id]["recordings"] = list(recordings)
 
     async def mutate_recordings(self, meeting_id: int, mutator):

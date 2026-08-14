@@ -16,7 +16,7 @@ golden-locked — this module only orchestrates the IO + the JSONB bookkeeping a
 from __future__ import annotations
 
 from datetime import datetime, timezone
-from typing import Any, Optional
+from typing import Any, Awaitable, Callable, Optional
 
 from ..obs import log_event
 from ..recording_codec import build_recording_master
@@ -215,6 +215,7 @@ async def finalize_master(
     meeting_id: int,
     recording_id: int,
     media_type: str = "audio",
+    on_audio_finalized: Optional[Callable[[int, int], Awaitable[None]]] = None,
 ) -> Optional[str]:
     """Build + upload the master for a recording media-file and stamp the JSONB. Returns the master
     storage key, or ``None`` when there is nothing to finalize.
@@ -286,6 +287,7 @@ async def finalize_master(
         m = next((x for x in r.get("media_files", []) if x.get("type") == media_type), None)
         if m is None:
             return recs, None
+        was_final = bool(m.get("is_final"))
         m["storage_path"] = master_key
         m["is_final"] = True
         m["assembled_chunk_count"] = listed_count
@@ -299,9 +301,19 @@ async def finalize_master(
             or (f"/recordings/{recording_id}/master?type=video" if media_type == "video" else None),
         }
         others = [x for x in recs if x.get("id") != recording_id]
-        return others + [r], master_key
+        return others + [r], (master_key, was_final)
 
-    return await repo.mutate_recordings(meeting_id, _stamp)
+    stamped = await repo.mutate_recordings(meeting_id, _stamp)
+    if stamped is None:
+        return None
+    master_key, was_already_final = stamped
+    # Fire the post-finalization hook only on a REAL transition: either we (re)assembled the master
+    # this call, or the media-file was not already final before the stamp. The finalize path is also
+    # the read path (GET .../master, GET .../media/{id}/raw), so without this gate every playback
+    # read would pay the hook's DB reads and its outbound enqueue.
+    if media_type == "audio" and on_audio_finalized is not None and (rebuild or not was_already_final):
+        await on_audio_finalized(meeting_id, recording_id)
+    return master_key
 
 
 def _verify_meeting_token(token: str, *, secret: Optional[str] = None) -> dict[str, Any]:

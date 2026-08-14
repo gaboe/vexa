@@ -103,6 +103,9 @@ class TranscriptStore(Protocol):
         persistence)."""
         ...
 
+    async def upsert_segments(self, meeting_id: int, segments: list[dict]) -> None:
+        ...
+
     async def delete_segments(self, meeting_id: int, segment_ids: list) -> None:
         """Withdraw retracted drafts by ``segment_id``: drop them from the live segments hash (before an
         un-flushed draft reaches Postgres) AND delete any already-flushed rows. Idempotent — a missing id

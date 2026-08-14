@@ -56,6 +56,10 @@ need 1 'name: VEXA_INTERNAL_API_SECRET' "terminal internal-edge secret"
 # pool and the meeting silently fails. Durable seam-guard so a refactor can't drop it again.
 need 1 'name: RUNTIME_K8S_TOLERATIONS'   "runtime carries spawn-Pod tolerations env"
 need 1 'name: RUNTIME_K8S_NODE_SELECTOR' "runtime carries spawn-Pod nodeSelector env"
+# Post-meeting jobs: the producer flag rides meeting-api, the worker credential rides admin-api as
+# an OPTIONAL secret key. Without both surfaces an operator cannot enable the capability at all.
+need 1 'name: LOCAL_DIARIZATION_ENABLED' "meeting-api post-meeting producer flag"
+need 1 'name: POST_MEETING_JOBS_WORKER_TOKEN' "admin-api post-meeting worker credential"
 
 # auth unset (values-test) → the chart Secret must NOT carry the key; auth set → it must.
 if grep -qE '^  CLAUDE_CODE_OAUTH_TOKEN:' <<< "$RENDER"; then

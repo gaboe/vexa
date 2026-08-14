@@ -1,7 +1,25 @@
 {
  "contract": "config.v1",
  "service": "admin-api",
+ "capabilities": {
+  "post_meeting_jobs": {
+   "mode": "all",
+   "description": "internal enqueue and worker lease APIs for durable post-meeting jobs; disabled until its worker credential is configured",
+   "when_unconfigured": "disabled"
+  }
+ },
  "keys": [
+  {
+   "key": "POST_MEETING_JOBS_WORKER_TOKEN",
+   "class": "capability",
+   "capability": "post_meeting_jobs",
+   "secret": true,
+   "description": "worker authentication credential that enables internal post-meeting job enqueue and worker lease APIs; unset keeps both APIs disabled",
+   "targets": [
+    "compose",
+    "helm"
+   ]
+  },
   {
    "key": "INTERNAL_API_SECRET",
    "class": "required-explicit",

@@ -109,6 +109,7 @@ redirect this operator callback. Leave all four values unset for the stock OSS b
 | `VEXA_DISPATCH_SIGNING_KEY` | `dev-dispatch-signing-key` | Signs dispatch tokens (the identity chain of custody). |
 | `NEXTAUTH_SECRET` | `dev-nextauth-secret` | Session secret for the web UI. |
 | `VEXA_BOT_API_KEY` | — | Pre-shared key a bot uses to call back into the stack. |
+| `POST_MEETING_JOBS_WORKER_TOKEN` | — | Worker credential (`X-Post-Meeting-Worker-Key`) for admin-api's durable post-meeting job APIs. Unset keeps the capability disabled: both the internal enqueue and the worker lease API answer 503. On Kubernetes it is an optional key in the admin token Secret. |
 
 ## Bot participant name
 
@@ -178,12 +179,14 @@ survives token rotation on any OS, configure an API key or a custom endpoint in
 **Settings → Models** (stored per-user/global in the database) — see the setup wizard or
 the table above.
 
-## Auto-join & calendar sync
+## Auto-join, calendar sync & local diarization
 
 Timing knobs for the two meeting-api background sweeps ([auto-join](/core/meetings#auto-join--scheduled-means-the-bot-comes)
 and [calendar sync](/how-to/calendar-sync)). Both degrade gracefully: without `ADMIN_API_URL` +
 `INTERNAL_API_SECRET`, calendar sync no-ops and auto-join spawns without per-user context — the
-stack still boots.
+stack still boots. `LOCAL_DIARIZATION_ENABLED` is disabled by default; when enabled, a completed
+meeting enqueues one `local_diarization` job only after its audio master finalizes. Missing admin
+configuration or an admin failure leaves meeting completion unaffected.
 
 | Variable | Default | Purpose |
 |---|---|---|
@@ -193,7 +196,8 @@ stack still boots.
 | `AUTO_JOIN_GRACE_S` | `600` | A meeting whose start passed longer ago than this is skipped — never joined hours late. |
 | `AUTO_JOIN_RETRY_BACKOFF_S` | `300` | Wait after a loud auto-join failure (cap/quota/spawn) before retrying that meeting. |
 | `CALENDAR_SYNC_INTERVAL_S` | `300` | How often connected ICS feeds are re-fetched and upserted. |
-| `ADMIN_API_URL` | — | admin-api base URL for the sweeps' internal lookups (spawn context, calendar configs). |
+| `ADMIN_API_URL` | — | admin-api base URL for the sweeps' internal lookups and opt-in local diarization enqueue. |
+| `LOCAL_DIARIZATION_ENABLED` | `false` | Set `true` to enqueue finalized completed recordings for local diarization. Requires `ADMIN_API_URL` and `INTERNAL_API_SECRET`; otherwise no request is made. |
 
 ## Images & runtime
 

@@ -101,6 +101,9 @@ services:
       - DB_PASSWORD=${DB_PASSWORD:-postgres}
       - ADMIN_API_TOKEN=${ADMIN_TOKEN:-changeme}
       - INTERNAL_API_SECRET=${INTERNAL_API_SECRET:-vexa-internal-secret}
+      # Worker credential for the durable post-meeting job APIs (internal enqueue + worker lease).
+      # Unset keeps the post_meeting_jobs capability disabled and both APIs 503.
+      - POST_MEETING_JOBS_WORKER_TOKEN=${POST_MEETING_JOBS_WORKER_TOKEN:-}
       - LOG_LEVEL=${LOG_LEVEL:-info}
     healthcheck:
       test: ["CMD", "python", "-c", "import urllib.request,sys; sys.exit(0 if urllib.request.urlopen('http://localhost:8001/health').status==200 else 1)"]
@@ -304,6 +307,9 @@ services:
       # (/internal/users/{id}/bot-context) and calendar sync discovers connected ICS feeds
       # (/internal/calendar-configs). Unset -> calendar sync no-ops, auto-join spawns uncapped.
       - ADMIN_API_URL=http://admin-api:8001
+      # Opt-in: enqueue one local_diarization job per completed meeting once its audio master is
+      # finalized. Needs admin-api's post_meeting_jobs capability configured to have any effect.
+      - LOCAL_DIARIZATION_ENABLED=${LOCAL_DIARIZATION_ENABLED:-false}
       # MeetingToken is signed (mint) AND verified (recordings upload) with ADMIN_TOKEN — the SAME
       # admin secret admin-api holds (admin-api gets ADMIN_API_TOKEN=${ADMIN_TOKEN}). Exactly like
       # main (meeting-api ADMIN_TOKEN = admin-api ADMIN_API_TOKEN). __main__ passes token_secret=ADMIN_TOKEN.

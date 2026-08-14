@@ -165,6 +165,11 @@ class SqlAlchemyRecordingRepo:
             data = m.data if isinstance(m.data, dict) else {}
             return list(data.get("recordings", []))
 
+    async def meeting_status(self, meeting_id):
+        async with self._session_factory() as db:
+            m = await self._meeting(db, meeting_id)
+            return m.status if m else None
+
     async def put_recordings(self, meeting_id, recordings):
         from sqlalchemy.orm.attributes import flag_modified
 

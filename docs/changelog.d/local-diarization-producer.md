@@ -1,0 +1,1 @@
+- **Opt-in local diarization jobs.** Operators can set `LOCAL_DIARIZATION_ENABLED=true` to enqueue each completed recording after its audio master finalizes; disabled deployments make no admin requests.
