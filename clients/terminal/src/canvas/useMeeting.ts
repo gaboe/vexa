@@ -1,5 +1,5 @@
 "use client";
-import { createContext, createElement, useContext, useEffect, useMemo, useRef, useState, type ReactNode } from "react";
+import { createContext, createElement, useContext, useEffect, useMemo, useRef, useState, useSyncExternalStore, type ReactNode } from "react";
 import { useLiveMeetings, fetchDurableTranscript, mergeNotesById, type DurableTranscript } from "../surfaces/liveMeetings";
 import { meetingEntities, type MeetingMock, type TranscriptLine } from "../surfaces/meetingModel";
 import { useMeetingLive } from "../surfaces/meetingLive";
@@ -290,6 +290,20 @@ export function pinSubscriptionUid(
   return mem.id === id ? mem : { id: "", uid: "" };
 }
 
+// An explicit, user-asked-for re-read of the durable transcript. The hydrate effect below keys on the
+// meeting row + stream signals — none of which move when a transcription retry finishes writing new
+// segments — so the retry control nudges this counter and the effect re-runs.
+let durableNonce = 0;
+const durableListeners = new Set<() => void>();
+export function refreshDurableTranscript(): void {
+  durableNonce += 1;
+  for (const listen of durableListeners) listen();
+}
+function subscribeDurable(cb: () => void): () => void {
+  durableListeners.add(cb);
+  return () => { durableListeners.delete(cb); };
+}
+
 function useLiveMeetingState(meetingId?: string): MeetingState {
   const contextMeetingId = useContext(MeetingScopeContext);
   const scopedMeetingId = meetingId ?? contextMeetingId;
@@ -325,6 +339,7 @@ function useLiveMeetingState(meetingId?: string): MeetingState {
   // the pinned live notes keep rendering meanwhile (mergeNotesById merges live OVER durable), so
   // the pane never blanks and converges on the complete durable doc.
   const effStatus = selected.live_status ?? selected.status;
+  const durableRefreshes = useSyncExternalStore(subscribeDurable, () => durableNonce, () => 0);
   useEffect(() => {
     setDurable({ lines: [], notes: [] });
     // P0 (wrong-row hydration fix): hydrate by the meetings-domain ROW id (`selected.id`), so the pane
@@ -351,7 +366,7 @@ function useLiveMeetingState(meetingId?: string): MeetingState {
     };
     load(0);
     return () => { cancelled = true; if (retry) clearTimeout(retry); };
-  }, [selected.id, selected.native_id, selected.platform, selected.session_uid, effStatus, live.ended]);
+  }, [selected.id, selected.native_id, selected.platform, selected.session_uid, effStatus, live.ended, durableRefreshes]);
 
   return useMemo(() => {
     const participants = safeArray(selected.participants);
@@ -412,6 +427,7 @@ function useLiveMeetingState(meetingId?: string): MeetingState {
       meeting: {
         id: selected.id,
         nativeId: selected.native_id,
+        recordingId: selected.recording_id,
         title: selected.title,
         status: selected.live_status ?? selected.status,
         live: Boolean(selected.session_uid),

@@ -72,6 +72,7 @@ export interface MeetingState {
   meeting: {
     id: string;
     nativeId?: string;
+    recordingId?: number;       // the audio-bearing recording — what a transcription retry acts on
     title: string;
     status?: string;
     live?: boolean;             // true while the backend session is live (session_uid present)

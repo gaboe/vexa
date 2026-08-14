@@ -2,6 +2,7 @@
 import { useState } from "react";
 import { CanvasActionsProvider, useActions, OPEN_ENTITY_EVENT } from "./actions";
 import { MeetingHealthBanner } from "./MeetingHealthBanner";
+import { TranscriptRetryBanner } from "./TranscriptRetryBanner";
 import { LiveTranscriptEngine, type EngineActions, type EngineEntity, type EngineSignal } from "./LiveTranscriptEngine";
 import { useMeetingNotes } from "./notes";
 import { deriveProcessingView } from "./processingView";
@@ -126,6 +127,7 @@ function MeetingCanvasBody({ meetingId }: { meetingId?: string }) {
         <span style={{ fontSize: 11.5, color: "var(--t3)" }}>{processing ? "cleaned + copilot" : "raw transcript"}</span>
       </div>
       <MeetingHealthBanner />
+      <TranscriptRetryBanner />
       <main style={{ flex: 1, minHeight: 0, overflow: "auto" }}>
         <div style={{ padding: MEETING_CANVAS_CONTENT_INSET }}>
           {processing ? <ProcessedTranscript /> : <RawTranscript />}

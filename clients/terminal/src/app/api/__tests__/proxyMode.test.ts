@@ -29,6 +29,16 @@ describe("proxyMode — meetings-only server gate", () => {
     expect(MEETINGS_DOMAIN.test("botsy")).toBe(false);
   });
 
+  it("recordings route to the gateway ROOT (meeting-api) — the transcription-retry pair included", () => {
+    expect(MEETINGS_DOMAIN.test("recordings")).toBe(true);
+    expect(MEETINGS_DOMAIN.test("recordings/489531790697/transcription/preflight")).toBe(true);
+    expect(MEETINGS_DOMAIN.test("recordings/489531790697/transcription/retry")).toBe(true);
+    expect(MEETINGS_DOMAIN.test("recordingsX")).toBe(false);
+    // …and they stay reachable in meetings-only mode (the retry lives on the meeting canvas)
+    process.env.NEXT_PUBLIC_TERMINAL_MODE = "meetings";
+    expect(refusedInMeetingsMode("recordings/1/transcription/retry")).toBe(false);
+  });
+
   it("user self-serve configs route to the gateway ROOT (calendar/webhook live in identity)", () => {
     expect(MEETINGS_DOMAIN.test("user/calendar")).toBe(true);
     expect(MEETINGS_DOMAIN.test("user/webhook")).toBe(true);

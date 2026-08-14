@@ -394,6 +394,21 @@ def create_app(
             "GET", _meeting(f"/recordings/{recording_id}/media/{media_file_id}/raw"), request
         )
 
+    # Transcription recovery for a recorded meeting that produced no transcript: preflight reports
+    # whether the retained master is eligible, retry re-sends it to the transcription service. The
+    # terminal's retry affordance calls both; owner scoping is the X-User-Id this proxy injects.
+    @app.get("/recordings/{recording_id}/transcription/preflight")
+    async def get_recording_transcription_preflight(recording_id: int, request: Request):
+        return await _forward(
+            "GET", _meeting(f"/recordings/{recording_id}/transcription/preflight"), request
+        )
+
+    @app.post("/recordings/{recording_id}/transcription/retry")
+    async def post_recording_transcription_retry(recording_id: int, request: Request):
+        return await _forward(
+            "POST", _meeting(f"/recordings/{recording_id}/transcription/retry"), request
+        )
+
     # native download alias (#579 C3): the sealed api.v1 media-download path a 0.10 client calls.
     # 0.12 renamed the media byte route to .../raw (finalize-on-read master stream); alias .../download
     # to it so recording playback no longer 404s. Forwarded verbatim (Range headers preserved).

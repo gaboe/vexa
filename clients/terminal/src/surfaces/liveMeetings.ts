@@ -8,6 +8,22 @@ import { useSyncExternalStore } from "react";
 import type { MeetingMock, TranscriptLine } from "./meetingModel";
 import { onGatewayWSConnected, onMeetingStatus } from "./gatewayWS";
 
+/** A `data.recordings[]` entry (recording.v1 JSONB). Only the id + the media_files types are read
+ *  here — enough to name the AUDIO-bearing recording, which is the one a transcription retry acts on. */
+interface RecordingDTO {
+  id?: number;
+  media_files?: { type?: string }[];
+}
+
+/** The recording a transcription retry would act on: the newest one that actually carries audio.
+ *  Falls back to the newest recording — the server's preflight is the authority on eligibility. */
+export function audioRecordingId(recordings: RecordingDTO[] | undefined): number | undefined {
+  const list = Array.isArray(recordings) ? recordings : [];
+  const withAudio = list.filter((r) => (Array.isArray(r?.media_files) ? r.media_files : []).some((f) => f?.type === "audio"));
+  const pick = (withAudio.length ? withAudio : list).at(-1);
+  return typeof pick?.id === "number" ? pick.id : undefined;
+}
+
 /** A row from meeting-api GET /meetings (live AND past). */
 interface MeetingRowDTO {
   id: number | string;
@@ -19,7 +35,7 @@ interface MeetingRowDTO {
   end_time?: string | null;
   constructed_meeting_url?: string | null;
   data?: {
-    recordings?: unknown[];
+    recordings?: RecordingDTO[];
     docs?: { workspace: string; path: string; title?: string; kind?: string }[];
     scheduled_at?: string;
     stop_requested?: boolean;
@@ -187,6 +203,7 @@ function toMock(d: MeetingRowDTO): MeetingMock {
     end_time: d.end_time ?? undefined,
     platform: d.platform === "google_meet" ? "Google Meet" : d.platform,
     has_recording: !!(d.data?.recordings?.length),
+    recording_id: audioRecordingId(d.data?.recordings),
     docs: d.data?.docs ?? [],
     participants: [],
     mentioned: [],
