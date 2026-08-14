@@ -65,6 +65,14 @@ spec:
                 secretKeyRef:
                   name: {{ include "vexa.adminTokenSecretName" . }}
                   key: INTERNAL_API_SECRET
+            # Worker credential for the durable post-meeting job APIs. Optional: without the key
+            # the post_meeting_jobs capability stays disabled and both APIs 503.
+            - name: POST_MEETING_JOBS_WORKER_TOKEN
+              valueFrom:
+                secretKeyRef:
+                  name: {{ include "vexa.adminTokenSecretName" . }}
+                  key: POST_MEETING_JOBS_WORKER_TOKEN
+                  optional: true
             - name: LOG_LEVEL
               value: {{ .Values.adminApi.logLevel | default "info" | quote }}
             {{- with .Values.adminApi.extraEnv }}

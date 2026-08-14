@@ -205,6 +205,7 @@ async def finalize_master(
         m = next((x for x in r.get("media_files", []) if x.get("type") == media_type), None)
         if m is None:
             return recs, None
+        was_final = bool(m.get("is_final"))
         m["storage_path"] = master_key
         m["is_final"] = True
         m["assembled_chunk_count"] = listed_count
@@ -218,10 +219,17 @@ async def finalize_master(
             or (f"/recordings/{recording_id}/master?type=video" if media_type == "video" else None),
         }
         others = [x for x in recs if x.get("id") != recording_id]
-        return others + [r], master_key
+        return others + [r], (master_key, was_final)
 
-    master_key = await repo.mutate_recordings(meeting_id, _stamp)
-    if master_key is not None and media_type == "audio" and on_audio_finalized is not None:
+    stamped = await repo.mutate_recordings(meeting_id, _stamp)
+    if stamped is None:
+        return None
+    master_key, was_already_final = stamped
+    # Fire the post-finalization hook only on a REAL transition: either we (re)assembled the master
+    # this call, or the media-file was not already final before the stamp. The finalize path is also
+    # the read path (GET .../master, GET .../media/{id}/raw), so without this gate every playback
+    # read would pay the hook's DB reads and its outbound enqueue.
+    if media_type == "audio" and on_audio_finalized is not None and (rebuild or not was_already_final):
         await on_audio_finalized(meeting_id, recording_id)
     return master_key
 

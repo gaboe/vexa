@@ -109,6 +109,7 @@ redirect this operator callback. Leave all four values unset for the stock OSS b
 | `VEXA_DISPATCH_SIGNING_KEY` | `dev-dispatch-signing-key` | Signs dispatch tokens (the identity chain of custody). |
 | `NEXTAUTH_SECRET` | `dev-nextauth-secret` | Session secret for the web UI. |
 | `VEXA_BOT_API_KEY` | — | Pre-shared key a bot uses to call back into the stack. |
+| `POST_MEETING_JOBS_WORKER_TOKEN` | — | Worker credential (`X-Post-Meeting-Worker-Key`) for admin-api's durable post-meeting job APIs. Unset keeps the capability disabled: both the internal enqueue and the worker lease API answer 503. On Kubernetes it is an optional key in the admin token Secret. |
 
 ## Bot participant name
 

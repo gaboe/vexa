@@ -143,6 +143,81 @@ async def test_finalization_hook_enqueues_after_completion(monkeypatch):
     assert len(transport.requests) == 1
 
 
+async def test_repeated_master_read_does_not_refire_the_hook(monkeypatch):
+    transport = CapturingTransport()
+    monkeypatch.setenv("LOCAL_DIARIZATION_ENABLED", "true")
+    repo = InMemoryRecordingRepo()
+    storage = InMemoryStorage()
+    repo.seed(meeting_id=7, user_id=7, session_uid="session", status="completed")
+    receipt = await upload_chunk(
+        repo, storage, token_meeting_id=7, session_uid="session", data=_wav(),
+        media_format="wav", is_final=True,
+    )
+
+    class Counting:
+        def __init__(self, inner):
+            self.inner, self.calls = inner, 0
+
+        async def enqueue_completed_recordings(self, meeting):
+            self.calls += 1
+            await self.inner.enqueue_completed_recordings(meeting)
+
+    producer = Counting(_producer(transport))
+    client = TestClient(create_app(
+        recording_repo=repo, storage=storage, post_meeting_producer=producer,
+    ))
+
+    responses = [
+        client.get(f"/recordings/{receipt['recording_id']}/master", headers={"x-user-id": "7"})
+        for _ in range(3)
+    ]
+
+    assert [r.status_code for r in responses] == [200, 200, 200]
+    # Only the first read is a real transition — later playback reads must not touch the producer.
+    assert producer.calls == 1
+    assert len(transport.requests) == 1
+
+
+async def test_disabled_finalization_hook_does_not_read_recordings(monkeypatch):
+    transport = CapturingTransport()
+    monkeypatch.delenv("LOCAL_DIARIZATION_ENABLED", raising=False)
+    repo = InMemoryRecordingRepo()
+    storage = InMemoryStorage()
+    repo.seed(meeting_id=7, user_id=7, session_uid="session", status="completed")
+    receipt = await upload_chunk(
+        repo, storage, token_meeting_id=7, session_uid="session", data=_wav(),
+        media_format="wav", is_final=True,
+    )
+
+    class Counting:
+        def __init__(self, inner):
+            self.inner, self.calls = inner, 0
+
+        async def enqueue_completed_recordings(self, meeting):
+            self.calls += 1
+            await self.inner.enqueue_completed_recordings(meeting)
+
+    status_reads = []
+    original_status = repo.meeting_status
+
+    async def counting_status(meeting_id):
+        status_reads.append(meeting_id)
+        return await original_status(meeting_id)
+
+    repo.meeting_status = counting_status
+    producer = Counting(_producer(transport))
+    app = create_app(recording_repo=repo, storage=storage, post_meeting_producer=producer)
+
+    response = TestClient(app).get(
+        f"/recordings/{receipt['recording_id']}/master", headers={"x-user-id": "7"},
+    )
+
+    assert response.status_code == 200
+    # Flag off ⇒ the hook returns before any repo read and never reaches the producer.
+    assert status_reads == []
+    assert producer.calls == 0
+
+
 async def test_finalization_hook_survives_producer_failure(monkeypatch):
     monkeypatch.setenv("LOCAL_DIARIZATION_ENABLED", "true")
     repo = InMemoryRecordingRepo()

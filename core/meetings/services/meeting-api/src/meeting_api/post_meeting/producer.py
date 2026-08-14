@@ -2,12 +2,15 @@ from __future__ import annotations
 
 import asyncio
 import os
+from collections import OrderedDict
 from typing import Any, Optional, Protocol
 
 import httpx
 
 from ..bot_spawn.env_flags import env_flag
 from ..obs import log_event
+
+_SENT_MEMO_MAX = 256
 
 
 class PostMeetingJobClient(Protocol):
@@ -48,7 +51,11 @@ class AdminPostMeetingJobClient:
 class LocalDiarizationProducer:
     def __init__(self, client: Optional[PostMeetingJobClient] = None):
         self._client = client
-        self._sent: set[tuple[str, int, str, int]] = set()
+        # Best-effort in-process memo of recent enqueues — ONLY an optimization to skip a redundant
+        # HTTP call. Duplicate suppression is authoritative server-side: admin-api's `insert_or_get`
+        # on the unique (kind, meeting_id, recording_id, recording_version) constraint. Bounded LRU
+        # so a long-lived process can't grow it without limit.
+        self._sent: OrderedDict[tuple[str, int, str, int], None] = OrderedDict()
         self._lock = asyncio.Lock()
 
     def _client_from_env(self) -> Optional[PostMeetingJobClient]:
@@ -108,4 +115,6 @@ class LocalDiarizationProducer:
                     )
                     sent = False
                 if sent:
-                    self._sent.add(key)
+                    self._sent[key] = None
+                    while len(self._sent) > _SENT_MEMO_MAX:
+                        self._sent.popitem(last=False)

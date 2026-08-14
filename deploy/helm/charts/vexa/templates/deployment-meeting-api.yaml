@@ -71,6 +71,10 @@ spec:
                 secretKeyRef:
                   name: {{ include "vexa.adminTokenSecretName" . }}
                   key: INTERNAL_API_SECRET
+            # Opt-in post-meeting diarization jobs; admin-api must have the post_meeting_jobs
+            # capability configured for an enqueue to be accepted.
+            - name: LOCAL_DIARIZATION_ENABLED
+              value: {{ .Values.meetingApi.localDiarizationEnabled | default "false" | quote }}
             # MeetingToken is signed AND verified with the SAME admin secret admin-api holds.
             - name: ADMIN_TOKEN
               valueFrom:

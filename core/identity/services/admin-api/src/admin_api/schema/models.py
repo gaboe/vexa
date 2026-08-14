@@ -162,6 +162,8 @@ class PostMeetingJob(Base):
     recording_version = Column(Integer, nullable=False)
     status = Column(String(32), nullable=False, server_default="pending")
     attempts = Column(Integer, nullable=False, server_default="0")
+    max_attempts = Column(Integer, nullable=False, server_default="5")
+    next_attempt_at = Column(DateTime(timezone=True), nullable=True)
     lease_owner = Column(String(255), nullable=True)
     lease_token_hash = Column(String(64), nullable=True)
     lease_expires_at = Column(DateTime(timezone=True), nullable=True)
@@ -170,7 +172,7 @@ class PostMeetingJob(Base):
 
     __table_args__ = (
         UniqueConstraint("kind", "meeting_id", "recording_id", "recording_version", name="uq_post_meeting_job_identity"),
-        Index("ix_post_meeting_jobs_claim", "status", "lease_expires_at"),
+        Index("ix_post_meeting_jobs_claim", "kind", "status", "lease_expires_at"),
     )
 
 

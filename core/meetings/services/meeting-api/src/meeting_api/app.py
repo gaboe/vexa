@@ -36,6 +36,7 @@ from fastapi.responses import JSONResponse
 
 from . import bot_spawn as _bot_spawn
 from . import recordings as _recordings
+from .bot_spawn.env_flags import env_flag as _env_flag
 from .collector.app import build_router as _build_collector_router
 from .collector.ports import RedisBus, TranscriptStore
 from .lifecycle.machine import LifecycleSink, MeetingStore
@@ -296,6 +297,9 @@ def create_app(
     async def _on_audio_finalized(meeting_id: int, recording_id: int) -> None:
         # Post-meeting enqueue is nonfatal: a finalized master must not 500 because admin is down.
         try:
+            # Flag first, repo reads second — a deployment with local diarization off pays nothing.
+            if not _env_flag("LOCAL_DIARIZATION_ENABLED", default=False):
+                return
             if await recording_repo.meeting_status(meeting_id) != "completed":
                 return
             await post_meeting_producer.enqueue_completed_recordings({

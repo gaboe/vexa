@@ -180,6 +180,10 @@ meetingApi:
     type: ClusterIP
     port: 8080
   defaultBotName: ""        # server-side fallback when POST /bots omits bot_name
+  # "true" enqueues one local_diarization job per completed meeting once its audio master is
+  # finalized. Requires admin-api's POST_MEETING_JOBS_WORKER_TOKEN (secret key, optional) —
+  # without it admin-api 503s the enqueue and meeting completion is unaffected.
+  localDiarizationEnabled: "false"
   transcriptionServiceUrl: ""   # STT endpoint the spawned bot transcribes against (empty ⇒ capture only)
   # Optional service-authority.v1 adapter JSON. Empty preserves stock OSS allow-all. A configured
   # authority must use failure_policy=closed and mode=enforce|observe; the secret lives under

@@ -15,7 +15,10 @@
    "capability": "post_meeting_jobs",
    "secret": true,
    "description": "worker authentication credential that enables internal post-meeting job enqueue and worker lease APIs; unset keeps both APIs disabled",
-   "targets": []
+   "targets": [
+    "compose",
+    "helm"
+   ]
   },
   {
    "key": "INTERNAL_API_SECRET",

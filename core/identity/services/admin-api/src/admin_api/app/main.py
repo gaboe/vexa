@@ -203,16 +203,23 @@ class PostMeetingEnqueueRequest(BaseModel):
 class PostMeetingClaimRequest(BaseModel):
     kind: str = Field(min_length=1, max_length=64)
     lease_seconds: int = Field(default=300, ge=1, le=3600)
+    worker_id: Optional[str] = Field(default=None, min_length=1, max_length=255)
+
+    model_config = {"extra": "forbid"}
 
 
 class PostMeetingLeaseRequest(BaseModel):
     lease_token: str = Field(min_length=1, max_length=255)
     lease_seconds: int = Field(default=300, ge=1, le=3600)
 
+    model_config = {"extra": "forbid"}
+
 
 class PostMeetingFailRequest(BaseModel):
     lease_token: str = Field(min_length=1, max_length=255)
     retryable: bool
+
+    model_config = {"extra": "forbid"}
 
 
 class TokenInfo(BaseModel):
@@ -917,6 +924,8 @@ def create_app() -> FastAPI:
             "recording_version": job.recording_version,
             "status": job.status,
             "attempts": job.attempts,
+            "max_attempts": job.max_attempts,
+            "next_attempt_at": job.next_attempt_at,
             "lease_expires_at": job.lease_expires_at,
         }
 
@@ -939,7 +948,7 @@ def create_app() -> FastAPI:
     ):
         _check_post_meeting_worker(worker_key)
         claimed = await PostMeetingJobRepository().claim(
-            db, kind=payload.kind, lease_seconds=payload.lease_seconds
+            db, kind=payload.kind, lease_seconds=payload.lease_seconds, worker_id=payload.worker_id
         )
         if claimed is None:
             return Response(status_code=status.HTTP_204_NO_CONTENT)

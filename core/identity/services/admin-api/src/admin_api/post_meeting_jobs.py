@@ -5,7 +5,7 @@ import secrets
 from dataclasses import dataclass
 from datetime import datetime, timedelta, timezone
 
-from sqlalchemy import and_, or_, select, update
+from sqlalchemy import and_, case, or_, select, update
 from sqlalchemy.dialects.postgresql import insert
 from sqlalchemy.ext.asyncio import AsyncSession
 
@@ -16,6 +16,9 @@ LEASED = "leased"
 RETRYABLE_FAILED = "retryable_failed"
 SUCCEEDED = "succeeded"
 PERMANENT_FAILED = "permanent_failed"
+
+BACKOFF_BASE_SECONDS = 30
+BACKOFF_CAP_SECONDS = 3600
 
 
 class StaleLeaseError(Exception):
@@ -34,6 +37,13 @@ def _now() -> datetime:
 
 def _token_hash(token: str) -> str:
     return hashlib.sha256(token.encode()).hexdigest()
+
+
+def backoff_for(attempts: int) -> timedelta:
+    """Exponential backoff from the attempt just spent, capped."""
+    return timedelta(
+        seconds=min(BACKOFF_BASE_SECONDS * 2 ** max(attempts - 1, 0), BACKOFF_CAP_SECONDS)
+    )
 
 
 class PostMeetingJobRepository:
@@ -76,6 +86,7 @@ class PostMeetingJobRepository:
         *,
         kind: str,
         lease_seconds: int,
+        worker_id: str | None = None,
     ) -> ClaimedJob | None:
         now = _now()
         token = secrets.token_urlsafe(32)
@@ -83,6 +94,14 @@ class PostMeetingJobRepository:
             select(PostMeetingJob.id)
             .where(
                 PostMeetingJob.kind == kind,
+                # ponytail: the ceiling also bounds crash-loop reclaim, so a job whose worker
+                # died at the last attempt stays `leased` with an expired lease instead of
+                # reaching `permanent_failed`; a sweeper is the upgrade path if that matters.
+                PostMeetingJob.attempts < PostMeetingJob.max_attempts,
+                or_(
+                    PostMeetingJob.next_attempt_at.is_(None),
+                    PostMeetingJob.next_attempt_at <= now,
+                ),
                 or_(
                     PostMeetingJob.status.in_((PENDING, RETRYABLE_FAILED)),
                     and_(
@@ -102,7 +121,8 @@ class PostMeetingJobRepository:
             .values(
                 status=LEASED,
                 attempts=PostMeetingJob.attempts + 1,
-                lease_owner=kind,
+                next_attempt_at=None,
+                lease_owner=worker_id or kind,
                 lease_token_hash=_token_hash(token),
                 lease_expires_at=now + timedelta(seconds=lease_seconds),
             )
@@ -170,7 +190,10 @@ class PostMeetingJobRepository:
                 PostMeetingJob.lease_expires_at > now,
             )
             .values(
-                status=RETRYABLE_FAILED if retryable else PERMANENT_FAILED,
+                status=case(
+                    (PostMeetingJob.attempts >= PostMeetingJob.max_attempts, PERMANENT_FAILED),
+                    else_=RETRYABLE_FAILED,
+                ) if retryable else PERMANENT_FAILED,
                 lease_owner=None,
                 lease_expires_at=None,
             )
@@ -179,5 +202,13 @@ class PostMeetingJobRepository:
         if job is None:
             await session.rollback()
             raise StaleLeaseError
+        if job.status == RETRYABLE_FAILED:
+            # The guarded update above already proved lease ownership; this only stamps backoff.
+            job = await session.scalar(
+                update(PostMeetingJob)
+                .where(PostMeetingJob.id == job_id)
+                .values(next_attempt_at=now + backoff_for(job.attempts))
+                .returning(PostMeetingJob)
+            )
         await session.commit()
         return job

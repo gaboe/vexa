@@ -94,7 +94,10 @@
    "class": "defaulted",
    "default": "false",
    "description": "opt in to enqueue one local_diarization job for each completed meeting whose audio master is finalized; unset/empty/invalid stays disabled",
-   "targets": []
+   "targets": [
+    "compose",
+    "helm"
+   ]
   },
   {
    "key": "DEFAULT_BOT_NAME",

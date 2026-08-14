@@ -241,6 +241,93 @@ def test_worker_routes_claim_once_reclaim_expired_and_reject_stale_lease(client,
     assert failed.status_code == 200 and failed.json()["job"]["status"] == "retryable_failed"
 
 
+def _job_row(pg_url, job_id):
+    engine = create_engine(pg_url)
+    with Session(engine) as session:
+        job = session.get(PostMeetingJob, job_id)
+        row = (job.status, job.attempts, job.max_attempts, job.next_attempt_at, job.lease_owner)
+    engine.dispose()
+    return row
+
+
+def _clear_backoff(pg_url, job_id):
+    engine = create_engine(pg_url)
+    with Session(engine) as session:
+        session.execute(update(PostMeetingJob).where(PostMeetingJob.id == job_id).values(
+            next_attempt_at=None
+        ))
+        session.commit()
+    engine.dispose()
+
+
+def _claim(client, **extra):
+    return client.post(
+        "/internal/post-meeting-jobs/claim", headers=_worker(),
+        json={"kind": "diarization", **extra},
+    )
+
+
+def _fail(client, job_id, lease_token, retryable=True):
+    return client.post(
+        f"/internal/post-meeting-jobs/{job_id}/fail", headers=_worker(),
+        json={"lease_token": lease_token, "retryable": retryable},
+    )
+
+
+def test_retryable_failure_backs_off_before_it_is_claimable_again(client, pg_url):
+    job_id = _seed_job(pg_url)
+    claimed = _claim(client).json()
+    failed = _fail(client, job_id, claimed["lease_token"]).json()["job"]
+
+    assert failed["status"] == "retryable_failed"
+    assert failed["next_attempt_at"] is not None
+    status, _, _, next_attempt_at, _ = _job_row(pg_url, job_id)
+    assert next_attempt_at > datetime.now(timezone.utc)
+    assert _claim(client).status_code == 204
+
+    _clear_backoff(pg_url, job_id)
+    again = _claim(client)
+    assert again.status_code == 200 and again.json()["job"]["id"] == job_id
+
+
+def test_exhausting_max_attempts_permanently_fails_and_stops_claiming(client, pg_url):
+    job_id = _seed_job(pg_url)
+    max_attempts = _job_row(pg_url, job_id)[2]
+
+    for _ in range(max_attempts):
+        claimed = _claim(client)
+        assert claimed.status_code == 200, claimed.text
+        job = _fail(client, job_id, claimed.json()["lease_token"]).json()["job"]
+        _clear_backoff(pg_url, job_id)
+
+    assert job["status"] == "permanent_failed"
+    assert job["attempts"] == max_attempts
+    assert _claim(client).status_code == 204
+
+
+def test_backing_off_job_does_not_starve_the_next_pending_job(client, pg_url):
+    first_id = _seed_job(pg_url)
+    second_id = _seed_job(pg_url)
+
+    claimed = _claim(client).json()
+    assert claimed["job"]["id"] == first_id
+    _fail(client, first_id, claimed["lease_token"])
+
+    next_claim = _claim(client)
+    assert next_claim.status_code == 200, next_claim.text
+    assert next_claim.json()["job"]["id"] == second_id
+
+
+def test_claim_records_worker_id_as_lease_owner_without_leaking_it(client, pg_url):
+    job_id = _seed_job(pg_url)
+    claimed = _claim(client, worker_id="worker-7")
+
+    assert claimed.status_code == 200
+    assert "lease_owner" not in claimed.json()["job"]
+    assert _job_row(pg_url, job_id)[4] == "worker-7"
+    assert _claim(client, unexpected="field").status_code == 422
+
+
 def test_worker_routes_stay_disabled_without_worker_credential(client, monkeypatch):
     monkeypatch.delenv("POST_MEETING_JOBS_WORKER_TOKEN")
     response = client.post("/internal/post-meeting-jobs/claim", json={"kind": "diarization"})
