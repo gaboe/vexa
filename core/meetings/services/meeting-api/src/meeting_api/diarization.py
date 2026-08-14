@@ -30,14 +30,25 @@ def _rttm_turns(rttm: str) -> list[tuple[float, float, str]]:
         if not isfinite(start) or not isfinite(duration) or start < 0 or duration <= 0:
             raise ValueError("RTTM duration must be positive and start non-negative")
         turns.append((start, start + duration, fields[7]))
-    speakers = sorted({turn[2] for turn in turns})
-    if not turns or len(speakers) > 2:
-        raise ValueError("RTTM must contain one or two speakers")
+    if not turns:
+        raise ValueError("RTTM must contain at least one speaker")
     return turns
 
 
+def _speaker_label(index: int) -> str:
+    """Anonymous label for the ``index``-th distinct RTTM speaker: A…Z, then AA, AB, … (spreadsheet
+    columns). Nothing about the person — the diarizer only knows "a different voice"."""
+    label = ""
+    while True:
+        index, remainder = divmod(index, 26)
+        label = chr(ord("A") + remainder) + label
+        if index == 0:
+            return f"Speaker {label}"
+        index -= 1
+
+
 def _label_segments(segments: list[dict[str, Any]], turns: list[tuple[float, float, str]]) -> list[dict[str, Any]]:
-    labels = {speaker: f"Speaker {'AB'[index]}" for index, speaker in enumerate(sorted({t[2] for t in turns}))}
+    labels = {speaker: _speaker_label(index) for index, speaker in enumerate(sorted({t[2] for t in turns}))}
     changed = []
     for segment in segments:
         try:

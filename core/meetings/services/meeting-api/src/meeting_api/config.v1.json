@@ -100,6 +100,21 @@
    ]
   },
   {
+   "key": "LOCAL_DIARIZATION_CLI",
+   "class": "defaulted",
+   "default": "argmax-cli",
+   "description": "diarizer binary the one-shot consumer (python -m meeting_api.post_meeting.diarize_once) execs as `<cli> diarize --audio-path ... --rttm-path ... --use-exclusive-reconciliation`, exactly like scripts/diarize-recording.sh; the consumer also needs ffmpeg on PATH. INTENTIONALLY on no deploy surface: no shipped image carries ffmpeg or the diarizer, so the consumer is operator-run (cron / k8s Job) — see /configuration#local-diarization-jobs",
+   "targets": []
+  },
+  {
+   "key": "POST_MEETING_JOBS_WORKER_TOKEN",
+   "class": "defaulted",
+   "default": "(unset — the consumer refuses to run and admin-api rejects every lease call)",
+   "secret": true,
+   "description": "shared worker token the one-shot local-diarization consumer sends as X-Post-Meeting-Worker-Key on admin-api's /internal/post-meeting-jobs claim/renew/complete/fail edges; must equal admin-api's POST_MEETING_JOBS_WORKER_TOKEN. INTENTIONALLY on no deploy surface for meeting-api: the long-running service never reads it, only the operator-run consumer process does",
+   "targets": []
+  },
+  {
    "key": "DEFAULT_BOT_NAME",
    "class": "defaulted",
    "default": "(unset — request_bot falls back to VexaBot-{random})",
