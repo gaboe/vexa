@@ -32,13 +32,30 @@ async function jsonOrThrow(res: Response) {
   return res.json();
 }
 
+/** Endpoint bases are stored as ORIGIN + optional prefix: the backend appends its own API path
+ *  (`/v1/messages`, `/v1/audio/transcriptions`). A URL pasted from a vendor's docs ends in `/v1`,
+ *  which would double the segment and 404 — so both shapes normalize to the same target here,
+ *  at the single point every write (wizard and Settings, per-user and global) passes through. */
+export function normalizeBaseUrl(url: string): string {
+  return url.trim().replace(/\/+$/, "").replace(/\/v1$/i, "");
+}
+
+/** The endpoint-base field names across both config domains. */
+const BASE_URL_KEYS = ["base_url", "url"];
+
+function normalizeBases<T extends Record<string, string | undefined>>(update: T): T {
+  const out = { ...update };
+  for (const k of BASE_URL_KEYS) if (typeof out[k] === "string") (out as Record<string, string>)[k] = normalizeBaseUrl(out[k]);
+  return out;
+}
+
 export async function getModelPrefs(): Promise<ModelPrefs> {
   return jsonOrThrow(await fetch("/api/user/models", { cache: "no-store" }));
 }
 
 export async function setModelPrefs(update: Partial<Record<keyof ModelPrefs, string>>): Promise<ModelPrefs> {
   return jsonOrThrow(await fetch("/api/user/models", {
-    method: "PUT", headers: { "Content-Type": "application/json" }, body: JSON.stringify(update),
+    method: "PUT", headers: { "Content-Type": "application/json" }, body: JSON.stringify(normalizeBases(update)),
   }));
 }
 
@@ -48,7 +65,7 @@ export async function getTranscriptionPrefs(): Promise<TranscriptionPrefs> {
 
 export async function setTranscriptionPrefs(update: { url?: string; token?: string }): Promise<TranscriptionPrefs> {
   return jsonOrThrow(await fetch("/api/user/transcription", {
-    method: "PUT", headers: { "Content-Type": "application/json" }, body: JSON.stringify(update),
+    method: "PUT", headers: { "Content-Type": "application/json" }, body: JSON.stringify(normalizeBases(update)),
   }));
 }
 
@@ -66,7 +83,7 @@ export async function getGlobalSetting(key: GlobalSettingKey): Promise<GlobalSet
 
 export async function setGlobalSetting(key: GlobalSettingKey, update: GlobalSetting): Promise<GlobalSetting> {
   const res = await fetch(`/api/admin/settings/${key}`, {
-    method: "PUT", headers: { "Content-Type": "application/json" }, body: JSON.stringify(update),
+    method: "PUT", headers: { "Content-Type": "application/json" }, body: JSON.stringify(normalizeBases(update)),
   });
   const body = await jsonOrThrow(res) as { value?: GlobalSetting };
   return body.value ?? {};

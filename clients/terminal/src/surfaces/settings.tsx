@@ -93,9 +93,11 @@ function CalendarSection() {
 }
 
 /** One models/transcription config form — the SAME fields serve the per-user prefs and (for
- *  admins) the global platform defaults; only load/save differ. Secrets arrive MASKED
- *  (********abcd): an untouched masked value is never sent back, typing replaces it, emptying a
- *  previously-set field clears it (empty string = clear, the API's contract). */
+ *  admins) the global platform defaults; only load/save differ. Secret fields always render
+ *  masked (`type="password"`, as the first-run wizard does) — a credential is never echoed back
+ *  in the clear, not on screen and not in the accessibility tree. An untouched value is never
+ *  sent back, typing replaces it, emptying a previously-set field clears it (empty string =
+ *  clear, the API's contract). */
 function ConfigForm({ fields, load, save, note }: {
   fields: Array<{ key: string; label: string; placeholder?: string; secret?: boolean; options?: Array<{ value: string; label: string }>; showIf?: (v: Record<string, string>) => boolean }>;
   load: () => Promise<Record<string, string>>;
@@ -144,7 +146,7 @@ function ConfigForm({ fields, load, save, note }: {
             </select>
           ) : (
             <input value={values[f.key] ?? ""} placeholder={f.placeholder}
-              type={f.secret && (values[f.key] ?? "") !== (initial[f.key] ?? "") ? "password" : "text"}
+              type={f.secret ? "password" : "text"}
               onChange={(e) => { setSaved(false); setValues((v) => ({ ...v, [f.key]: e.target.value })); }}
               style={field} />
           )}
@@ -212,7 +214,7 @@ function ModelsSection() {
       { value: "subscription", label: "Claude subscription (deployment credentials)" },
       { value: "custom", label: "Custom endpoint (open-source / gateway)" },
     ] },
-    { key: "base_url", label: "Base URL", placeholder: "https://… (Anthropic/OpenAI-compatible gateway)", showIf: (v: Record<string, string>) => v.mode === "custom" },
+    { key: "base_url", label: "Base URL", placeholder: "https://… gateway root — trailing /v1 optional", showIf: (v: Record<string, string>) => v.mode === "custom" },
     { key: "api_key", label: "API key", placeholder: "unchanged unless typed", secret: true, showIf: (v: Record<string, string>) => v.mode === "custom" },
     { key: "model", label: "Chat model", placeholder: "deployment default (e.g. sonnet)" },
     { key: "meeting_model", label: "Meeting model", placeholder: "defaults to chat model" },
