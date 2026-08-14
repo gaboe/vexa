@@ -27,13 +27,35 @@
 
 const WAV_HEADER_BYTES = 44;
 
-function parseWavHeader(buf: Buffer): { fmtChunk: Buffer; declaredDataSize: number } {
+/** Walk the RIFF chunk list (id(4) + size(4) + body, odd bodies padded to even) for `fmt ` and
+ *  `data`. A standard WAV carries chunks between them — ffmpeg writes LIST/INFO by default — so
+ *  `data` is located, never assumed at offset 36. `fmtChunk` is the 16-byte PCM fmt body copied
+ *  verbatim into the master; a longer body (WAVE_FORMAT_EXTENSIBLE) is truncated to that prefix.
+ *  The payload is the data body by its declared size, falling back to the rest of the buffer when
+ *  that size is 0 or overruns — a streaming writer stamps a placeholder and appends. */
+function parseWavHeader(buf: Buffer): { fmtChunk: Buffer; payload: Buffer } {
   if (buf.length < WAV_HEADER_BYTES) throw new Error("WAV chunk shorter than the 44-byte header");
   if (buf.toString("ascii", 0, 4) !== "RIFF" || buf.toString("ascii", 8, 12) !== "WAVE")
     throw new Error("WAV chunk missing RIFF/WAVE magic");
-  if (buf.toString("ascii", 36, 40) !== "data")
-    throw new Error(`WAV chunk non-canonical: 'data' expected at offset 36, found ${JSON.stringify(buf.toString("ascii", 36, 40))}`);
-  return { fmtChunk: buf.subarray(20, 36), declaredDataSize: buf.readUInt32LE(40) };
+
+  let fmtChunk: Buffer | null = null;
+  let pos = 12;
+  while (pos + 8 <= buf.length) {
+    const id = buf.toString("ascii", pos, pos + 4);
+    const size = buf.readUInt32LE(pos + 4);
+    const bodyAt = pos + 8;
+    if (id === "fmt ") {
+      if (bodyAt + 16 > buf.length) throw new Error("WAV 'fmt ' chunk runs past the end of the buffer");
+      fmtChunk = buf.subarray(bodyAt, bodyAt + 16);
+    } else if (id === "data") {
+      if (fmtChunk === null) throw new Error("WAV chunk has 'data' before any 'fmt ' chunk");
+      const end = size > 0 && size <= buf.length - bodyAt ? bodyAt + size : buf.length;
+      return { fmtChunk, payload: buf.subarray(bodyAt, end) };
+    }
+    if (size > buf.length - bodyAt) break; // a size running past the buffer — nothing further parses
+    pos = bodyAt + size + (size & 1);
+  }
+  throw new Error(`WAV chunk has no parsable 'data' chunk${fmtChunk === null ? " and no 'fmt ' chunk" : ""}`);
 }
 
 /** RIFF-aware merge (mirrors PulseAudioCapture._wrapWav). fmt is copied from the
@@ -44,9 +66,9 @@ function buildWavMaster(chunks: Buffer[]): Buffer {
   const { fmtChunk } = parseWavHeader(real[0]);
   const payloads: Buffer[] = [];
   real.forEach((c, i) => {
-    const { fmtChunk: f } = parseWavHeader(c);
+    const { fmtChunk: f, payload } = parseWavHeader(c);
     if (!f.equals(fmtChunk)) throw new Error(`WAV fmt chunk mismatch at chunk index ${i}`);
-    payloads.push(c.subarray(WAV_HEADER_BYTES));
+    payloads.push(payload);
   });
   const totalData = payloads.reduce((n, p) => n + p.length, 0);
   const header = Buffer.alloc(WAV_HEADER_BYTES);
